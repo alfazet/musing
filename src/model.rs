@@ -1,3 +1,4 @@
+pub mod comparator;
 pub mod filter;
 pub mod playlist;
 pub mod request;

@@ -56,15 +56,4 @@ async fn main() {
         &PathBuf::from("/home/antek/Music/tracks"),
         vec!["mp3".into()],
     );
-    let filter_expr = FilterExpr::try_from(String::from(
-        r#"(albumartist=="ILLENIUM" | albumartist=="Dabin")"#,
-    ))
-    .unwrap();
-    let resp = db.unique(
-        "album".into(),
-        filter_expr,
-        vec!["date".into()],
-        vec!["albumartist".into()],
-    );
-    println!("{}", resp.into_json_string().unwrap());
 }

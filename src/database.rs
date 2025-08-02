@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde_json::{Map, Value as JsonValue};
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     iter::{FromIterator, IntoIterator, Iterator},
     path::{Path, PathBuf},
@@ -81,14 +82,26 @@ impl Database {
         self.last_update = SystemTime::now();
     }
 
-    /// Get ids of songs matching `filter_expr`.
-    pub fn select(&self, filter_expr: FilterExpr) -> Response {
-        let ids: Vec<_> = self
+    /// Get ids of songs matching `filter_expr`, sorted by the values of tags in `sort_by`.
+    pub fn select(&self, (filter_expr, sort_by): (FilterExpr, Vec<String>)) -> Response {
+        let cmp = |lhs: &SongMeta, rhs: &SongMeta| -> Ordering {
+            for tag in sort_by.iter() {
+                match (lhs.get(tag)).cmp(&rhs.get(tag)) {
+                    Ordering::Equal => (),
+                    other => return other,
+                }
+            }
+
+            Ordering::Equal
+        };
+
+        let mut filtered: Vec<_> = self
             .data_rows
             .iter()
             .filter(|row| filter_expr.evaluate(&row.song))
-            .map(|row| &row.id)
             .collect();
+        filtered.sort_by(|lhs, rhs| cmp(&lhs.song.song_meta, &rhs.song.song_meta));
+        let ids: Vec<_> = filtered.into_iter().map(|row| row.id).collect();
 
         Response::new_ok().with_item("ids".into(), &ids)
     }
@@ -114,24 +127,11 @@ impl Database {
         Response::new_ok().with_item("values".into(), &values)
     }
 
-    /// Get unique values of `tag` among songs matching `filter_expr`, sorted by `sort_by`, grouped by tags in `group_by`.
+    /// Get unique values of `tag` among songs matching `filter_expr`, grouped by tags in `group_by`.
     pub fn unique(
         &self,
-        main_tag: String,
-        filter_expr: FilterExpr,
-        sort_by: Vec<String>,
-        group_by: Vec<String>,
+        (tag, filter_expr, group_by): (String, FilterExpr, Vec<String>),
     ) -> Response {
-        // TODO: sorting duplicates values?
-        let song_to_map_entry = |meta: &SongMeta| -> (Vec<Option<String>>, Option<String>) {
-            let mut entry = (Vec::new(), meta.get(&main_tag).cloned());
-            for tag in sort_by.iter() {
-                entry.0.push(meta.get(&tag).cloned());
-            }
-
-            entry
-        };
-
         let mut groups = HashMap::new();
         let filtered = self
             .data_rows
@@ -146,9 +146,9 @@ impl Database {
             groups
                 .entry(combination)
                 .and_modify(|set: &mut HashSet<_>| {
-                    set.insert(song_to_map_entry(&meta));
+                    set.insert(meta.get(&tag).cloned());
                 })
-                .or_insert([song_to_map_entry(&meta)].into());
+                .or_insert([meta.get(&tag).cloned()].into());
         }
         let values: Vec<_> = groups
             .into_iter()
@@ -158,10 +158,8 @@ impl Database {
                     .cloned()
                     .zip(combination.into_iter().map(|value| value.into()));
                 let mut json_map = Map::from_iter(data);
-                let mut values: Vec<_> = values.into_iter().collect();
-                values.sort_by(|e1, e2| (e1.0).cmp(&e2.0));
-                let values = values.into_iter().map(|entry| entry.1).collect();
-                json_map.insert(main_tag.clone(), values);
+                let values: Vec<_> = values.into_iter().collect();
+                json_map.insert(tag.clone(), values.into());
 
                 json_map
             })
