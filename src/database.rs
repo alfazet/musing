@@ -114,46 +114,59 @@ impl Database {
         Response::new_ok().with_item("values".into(), &values)
     }
 
-    /// Get unique values of `tag` among songs matching `filter_str`, grouped by tags in `group_by`.
-    pub fn unique(&self, tag: String, filter_str: String, group_by: Vec<String>) -> Response {
-        // let filter_expr = match parsing::filter::into_rpn(&filter_str) {
-        //     Ok(expr) => expr,
-        //     Err(e) => return Response::new_err(e),
-        // };
-        // let mut groups = HashMap::new();
-        // let filtered = self
-        //     .data_rows
-        //     .iter()
-        //     .filter(|row| parsing::filter::evaluate(&filter_expr, &row.song))
-        //     .map(|row| &row.song.song_meta);
-        // for meta in filtered {
-        //     let combination: Vec<_> = group_by
-        //         .iter()
-        //         .map(|group_tag| meta.get(group_tag).cloned())
-        //         .collect();
-        //     groups
-        //         .entry(combination)
-        //         .and_modify(|set: &mut HashSet<_>| {
-        //             set.insert(meta.get(&tag).cloned());
-        //         })
-        //         .or_insert([meta.get(&tag).cloned()].into());
-        // }
-        // let values: Vec<_> = groups
-        //     .into_iter()
-        //     .map(|(combination, songs)| {
-        //         let data = group_by
-        //             .iter()
-        //             .cloned()
-        //             .zip(combination.into_iter().map(|value| value.into()));
-        //         let mut json_map = Map::from_iter(data);
-        //         json_map.insert(tag.clone(), songs.into_iter().collect());
-        //
-        //         json_map
-        //     })
-        //     .collect();
-        //
-        // Response::new_ok().with_item("values".into(), &values)
+    /// Get unique values of `tag` among songs matching `filter_expr`, sorted by `sort_by`, grouped by tags in `group_by`.
+    pub fn unique(
+        &self,
+        main_tag: String,
+        filter_expr: FilterExpr,
+        sort_by: Vec<String>,
+        group_by: Vec<String>,
+    ) -> Response {
+        // TODO: sorting duplicates values?
+        let song_to_map_entry = |meta: &SongMeta| -> (Vec<Option<String>>, Option<String>) {
+            let mut entry = (Vec::new(), meta.get(&main_tag).cloned());
+            for tag in sort_by.iter() {
+                entry.0.push(meta.get(&tag).cloned());
+            }
 
-        Response::new_ok()
+            entry
+        };
+
+        let mut groups = HashMap::new();
+        let filtered = self
+            .data_rows
+            .iter()
+            .filter(|row| filter_expr.evaluate(&row.song))
+            .map(|row| &row.song.song_meta);
+        for meta in filtered {
+            let combination: Vec<_> = group_by
+                .iter()
+                .map(|group_tag| meta.get(group_tag).cloned())
+                .collect();
+            groups
+                .entry(combination)
+                .and_modify(|set: &mut HashSet<_>| {
+                    set.insert(song_to_map_entry(&meta));
+                })
+                .or_insert([song_to_map_entry(&meta)].into());
+        }
+        let values: Vec<_> = groups
+            .into_iter()
+            .map(|(combination, values)| {
+                let data = group_by
+                    .iter()
+                    .cloned()
+                    .zip(combination.into_iter().map(|value| value.into()));
+                let mut json_map = Map::from_iter(data);
+                let mut values: Vec<_> = values.into_iter().collect();
+                values.sort_by(|e1, e2| (e1.0).cmp(&e2.0));
+                let values = values.into_iter().map(|entry| entry.1).collect();
+                json_map.insert(main_tag.clone(), values);
+
+                json_map
+            })
+            .collect();
+
+        Response::new_ok().with_item("values".into(), &values)
     }
 }

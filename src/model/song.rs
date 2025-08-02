@@ -10,7 +10,7 @@ use symphonia::core::{
     conv::ConvertibleSample,
     formats::{FormatOptions, Track},
     io::MediaSourceStream,
-    meta::{Metadata, MetadataOptions, MetadataRevision},
+    meta::{self, Metadata, MetadataOptions, MetadataRevision},
     probe::{Hint, ProbeResult, ProbedMetadata},
 };
 
@@ -42,10 +42,26 @@ impl SongMeta {
         let mut data = HashMap::new();
         for tag in revision.tags() {
             if let Some(key) = tag.std_key {
-                data.insert(
-                    utils::enum_stringify!(key).to_lowercase(),
-                    tag.value.to_string(),
-                );
+                let name = utils::enum_stringify!(key).to_lowercase();
+                let value = match name.as_str() {
+                    // all this so that we can sort by tracknumber properly...
+                    "tracknumber" => {
+                        let value = tag.value.to_string();
+                        let split: Vec<_> = value.split('/').collect();
+                        if split.len() == 1 {
+                            value
+                        } else {
+                            let (n, out_of) = (
+                                split[0].parse::<u32>().unwrap(),
+                                split[1].parse::<u32>().unwrap(),
+                            );
+                            format!("{:08}/{:08}", n, out_of)
+                        }
+                    }
+                    other => tag.value.to_string(),
+                };
+
+                data.insert(name, value);
             }
         }
 

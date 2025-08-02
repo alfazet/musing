@@ -1,10 +1,18 @@
-use std::fmt::Display;
-use thiserror::Error;
+use std::fmt::{self, Display, Formatter};
 
-#[derive(Error, Debug)]
+#[derive(Debug)]
 pub enum MyError {
-    #[error("FileError: {0}")]
     File(String),
-    #[error("SyntaxError: {0}")]
     Syntax(String),
 }
+
+impl Display for MyError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::File(e) => write!(f, "FileError: {}", e),
+            Self::Syntax(e) => write!(f, "SyntaxError: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for MyError {}
