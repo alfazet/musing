@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::{
-    fs::{self, File, DirEntry, Metadata},
+    fs::{self, DirEntry, File, Metadata},
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -14,17 +14,13 @@ macro_rules! enum_stringify {
 pub(crate) use enum_stringify;
 
 /// Returns absolute paths of files in this directory and its sub-dirs.
-/// Only files with last modification timestamp greater than `timestamp`
+/// Only files with creation times greater than `timestamp`
 /// and extensions contained in `ok_extensions` are taken into account.
-pub fn walk_dir(
-    root_dir: &Path,
-    timestamp: SystemTime,
-    ok_extensions: Vec<String>,
-) -> Vec<PathBuf> {
+pub fn walk_dir(root_dir: &Path, timestamp: SystemTime, ok_extensions: &[String]) -> Vec<PathBuf> {
     let is_ok = |path: &Path| -> bool {
         if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
             if ok_extensions.iter().any(|ok_ext| ok_ext == ext) {
-                if let Ok(mod_time) = path.metadata().and_then(|meta| meta.modified()) {
+                if let Ok(mod_time) = path.metadata().and_then(|meta| meta.created()) {
                     return mod_time >= timestamp;
                 }
             }
@@ -58,7 +54,10 @@ pub fn walk_dir(
 #[cfg(test)]
 mod test {
     use super::*;
-    use rand::{prelude::*, distr::{Alphanumeric, SampleString}};
+    use rand::{
+        distr::{Alphanumeric, SampleString},
+        prelude::*,
+    };
 
     #[test]
     fn find_all_mp3s() {

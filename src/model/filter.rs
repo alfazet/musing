@@ -67,17 +67,32 @@ impl FilterExprSymbol {
 }
 
 impl FilterExpr {
-    pub fn new() -> Self {
-        Self {
-            symbols: Vec::new(),
+    pub fn try_new(symbols: Vec<FilterExprSymbol>) -> Result<Self> {
+        use FilterExprOperator::*;
+        use FilterExprSymbol::*;
+
+        let mut stack_size = 0;
+        for symbol in symbols.iter() {
+            match symbol {
+                Operator(op) => {
+                    if stack_size < 2 {
+                        bail!(MyError::Syntax("Invalid filter expression".into()));
+                    }
+                    stack_size -= 1;
+                }
+                Filter(filter) => stack_size += 1,
+            }
+        }
+        if stack_size == 1 {
+            Ok(Self { symbols })
+        } else {
+            bail!(MyError::Syntax("Invalid filter expression".into()));
         }
     }
 
-    pub fn push(&mut self, symbol: FilterExprSymbol) {
-        self.symbols.push(symbol);
-    }
-
-    pub fn evaluate(&self, song: &Song) -> Result<bool> {
+    // unwraps here will never panic because all
+    // filter expressions pass a validity check on creation
+    pub fn evaluate(&self, song: &Song) -> bool {
         use FilterExprOperator::*;
         use FilterExprSymbol::*;
 
@@ -85,12 +100,8 @@ impl FilterExpr {
         for symbol in self.symbols.iter() {
             match symbol {
                 Operator(op) => {
-                    let f1 = stack
-                        .pop()
-                        .ok_or(MyError::Syntax("Invalid filter expression".into()))?;
-                    let f2 = stack
-                        .pop()
-                        .ok_or(MyError::Syntax("Invalid filter expression".into()))?;
+                    let f1 = stack.pop().unwrap();
+                    let f2 = stack.pop().unwrap();
                     let res = match op {
                         OpAnd => f1 & f2,
                         OpOr => f1 | f2,
@@ -101,8 +112,6 @@ impl FilterExpr {
             }
         }
 
-        Ok(stack
-            .pop()
-            .ok_or(MyError::Syntax("Invalid filter expression".into()))?)
+        stack.pop().unwrap()
     }
 }

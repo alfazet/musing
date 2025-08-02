@@ -3,7 +3,7 @@ use std::{iter::Peekable, str};
 
 use crate::{error::MyError, model::filter::*};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Operator(u8);
 const OP_AND: Operator = Operator(1);
 const OP_OR: Operator = Operator(2);
@@ -177,10 +177,27 @@ fn into_rpn(infix: Vec<Token>) -> Result<Vec<Token>> {
     Ok(rpn)
 }
 
-// impl TryFrom<String> for FilterExpr {
-//     type Error = MyError;
-//
-//     fn try_from(s: String) -> Result<Self> {
-//
-//     }
-// }
+impl TryFrom<String> for FilterExpr {
+    type Error = anyhow::Error;
+
+    fn try_from(s: String) -> Result<Self> {
+        let infix = tokenize(&s)?;
+        let rpn = into_rpn(infix)?;
+        let mut filter_expr_symbols = Vec::new();
+        for token in rpn.into_iter() {
+            let symbol = match token {
+                Token::Operator(op) => match op {
+                    OP_AND => FilterExprSymbol::Operator(FilterExprOperator::OpAnd),
+                    OP_OR => FilterExprSymbol::Operator(FilterExprOperator::OpOr),
+                    _ => unreachable!(),
+                },
+                Token::Filter(args) => FilterExprSymbol::try_into_filter(args)?,
+                // there are no parentheses in rpn
+                _ => unreachable!(),
+            };
+            filter_expr_symbols.push(symbol);
+        }
+
+        FilterExpr::try_new(filter_expr_symbols)
+    }
+}

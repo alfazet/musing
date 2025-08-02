@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    model::{response::Response, song::*},
+    model::{filter::FilterExpr, response::Response, song::*},
     utils,
 };
 
@@ -21,18 +21,19 @@ pub struct DataRow {
 #[derive(Debug)]
 pub struct Database {
     root_dir: PathBuf,
+    ok_ext: Vec<String>,
     data_rows: Vec<DataRow>,
     last_update: SystemTime,
 }
 
 impl Database {
-    fn to_data_rows(files: &[PathBuf]) -> impl Iterator<Item = DataRow> {
+    fn to_data_rows(files: &[PathBuf], id_offset: u32) -> impl Iterator<Item = DataRow> {
         files
             .iter()
             .enumerate()
-            .filter_map(|(id, file)| match Song::try_from_file(file) {
+            .filter_map(move |(id, file)| match Song::try_from_file(file) {
                 Ok(song) => Some(DataRow {
-                    id: id as u32 + 1,
+                    id: id as u32 + id_offset + 1,
                     song,
                 }),
                 Err(e) => {
@@ -43,56 +44,53 @@ impl Database {
     }
 
     pub fn from_dir(dir: &Path, ok_ext: Vec<String>) -> Self {
-        let all_files = utils::walk_dir(dir, SystemTime::UNIX_EPOCH, ok_ext);
-        let data_rows = Self::to_data_rows(&all_files).collect();
+        let files = utils::walk_dir(dir, SystemTime::UNIX_EPOCH, &ok_ext);
+        let data_rows = Self::to_data_rows(&files, 0).collect();
         let last_update = SystemTime::now();
 
         Self {
             root_dir: dir.to_path_buf(),
+            ok_ext,
             data_rows,
             last_update,
         }
     }
 
-    // TODO: this doesn't check if any new files have been created
-    // call from_dir with .last_update timestamp and pass it to walk_dir
-    // walk_dir should only check files that are newer than timestamp
-    // also make sure that ids of new songs are increasing starting at the last
-    // already present id
     pub fn update(&mut self) {
         for row in self.data_rows.iter_mut() {
-            if let Ok(timestamp) = row
+            if let Ok(mod_time) = row
                 .song
                 .path
                 .metadata()
-                .and_then(|metadata| metadata.accessed())
+                .and_then(|metadata| metadata.modified())
             {
-                if timestamp > self.last_update {
+                if mod_time >= self.last_update {
                     if let Ok(song) = Song::try_from_file(&row.song.path) {
                         row.song = song;
                     }
                 }
             }
         }
+        let new_files = utils::walk_dir(&self.root_dir, self.last_update, &self.ok_ext);
+        let mut new_data_rows = Self::to_data_rows(
+            &new_files,
+            self.data_rows.last().map(|row| row.id).unwrap_or(0),
+        )
+        .collect();
+        self.data_rows.append(&mut new_data_rows);
         self.last_update = SystemTime::now();
     }
 
-    /// Get ids of songs matching `filter`.
-    pub fn select(&self, filter_str: String) -> Response {
-        // let filter_expr = match parsing::filter::into_rpn(&filter_str) {
-        //     Ok(expr) => expr,
-        //     Err(e) => return Response::new_err(e),
-        // };
-        // let ids: Vec<_> = self
-        //     .data_rows
-        //     .iter()
-        //     .filter(|row| parsing::filter::evaluate(&filter_expr, &row.song))
-        //     .map(|row| &row.id)
-        //     .collect();
-        //
-        // Response::new_ok().with_item("ids".into(), &ids)
+    /// Get ids of songs matching `filter_expr`.
+    pub fn select(&self, filter_expr: FilterExpr) -> Response {
+        let ids: Vec<_> = self
+            .data_rows
+            .iter()
+            .filter(|row| filter_expr.evaluate(&row.song))
+            .map(|row| &row.id)
+            .collect();
 
-        Response::new_ok()
+        Response::new_ok().with_item("ids".into(), &ids)
     }
 
     /// Get values of `tags` for songs with `ids`.
