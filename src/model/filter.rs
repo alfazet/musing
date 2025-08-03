@@ -1,7 +1,10 @@
 use anyhow::{Result, anyhow, bail};
 use regex::Regex;
 
-use crate::{error::MyError, model::song::*};
+use crate::{
+    error::MyError,
+    model::{song::*, tag_key::TagKey},
+};
 
 pub type FilterArgs = (String, String, String);
 
@@ -10,9 +13,9 @@ pub trait Filter {
 }
 
 struct RegexFilter {
-    tag: String,
+    tag: TagKey,
     regex: Regex,
-    positive: bool,
+    inverted: bool,
 }
 
 // TODO: FuzzyFilter based on edit distance
@@ -36,7 +39,7 @@ impl Filter for RegexFilter {
         match song.song_meta.get(&self.tag) {
             Some(value) => {
                 let v = self.regex.is_match(value);
-                if self.positive { v } else { !v }
+                if self.inverted { !v } else { v }
             }
             None => false,
         }
@@ -44,21 +47,22 @@ impl Filter for RegexFilter {
 }
 
 impl RegexFilter {
-    pub fn new(tag: String, regex: String, positive: bool) -> Result<Self> {
+    pub fn new(tag: TagKey, regex: String, inverted: bool) -> Result<Self> {
         let regex = Regex::new(&regex).map_err(|e| MyError::Syntax(e.to_string()))?;
         Ok(Self {
             tag,
             regex,
-            positive,
+            inverted,
         })
     }
 }
 
 impl FilterExprSymbol {
     pub fn try_into_filter((tag, comparator, pattern): FilterArgs) -> Result<Self> {
+        let tag_key = tag.parse::<TagKey>()?;
         let boxed_filter = match comparator.as_str() {
-            "==" => Box::new(RegexFilter::new(tag, pattern, true)?),
-            "!=" => Box::new(RegexFilter::new(tag, pattern, false)?),
+            "==" => Box::new(RegexFilter::new(tag_key, pattern, false)?),
+            "!=" => Box::new(RegexFilter::new(tag_key, pattern, true)?),
             _ => bail!(MyError::Syntax("Invalid comparator".into())),
         };
 

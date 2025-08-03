@@ -1,5 +1,8 @@
 use anyhow::{Result, anyhow, bail};
-use std::{iter::Peekable, str};
+use std::{
+    iter::Peekable,
+    str::{self, FromStr},
+};
 
 use crate::{error::MyError, model::filter::*};
 
@@ -177,11 +180,11 @@ fn into_rpn(infix: Vec<Token>) -> Result<Vec<Token>> {
     Ok(rpn)
 }
 
-impl TryFrom<String> for FilterExpr {
-    type Error = anyhow::Error;
+impl FromStr for FilterExpr {
+    type Err = anyhow::Error;
 
-    fn try_from(s: String) -> Result<Self> {
-        let infix = tokenize(&s)?;
+    fn from_str(s: &str) -> Result<Self> {
+        let infix = tokenize(s)?;
         let rpn = into_rpn(infix)?;
         let mut filter_expr_symbols = Vec::new();
         for token in rpn.into_iter() {

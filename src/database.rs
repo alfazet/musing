@@ -9,18 +9,16 @@ use std::{
 };
 
 use crate::{
-    model::{filter::FilterExpr, response::Response, song::*},
+    model::{filter::FilterExpr, response::Response, song::*, tag_key::TagKey},
     utils,
 };
 
-#[derive(Debug)]
 pub struct DataRow {
     pub id: u32,
     pub song: Song,
     pub to_delete: bool,
 }
 
-#[derive(Debug)]
 pub struct Database {
     root_dir: PathBuf,
     ok_ext: Vec<String>,
@@ -88,7 +86,7 @@ impl Database {
     }
 
     /// Get ids of songs matching `filter_expr`, sorted by the values of tags in `sort_by`.
-    pub fn select(&self, (filter_expr, sort_by): (FilterExpr, Vec<String>)) -> Response {
+    pub fn select(&self, (filter_expr, sort_by): (FilterExpr, Vec<TagKey>)) -> Response {
         let cmp = |lhs: &SongMeta, rhs: &SongMeta| -> Ordering {
             for tag in sort_by.iter() {
                 match (lhs.get(tag)).cmp(&rhs.get(tag)) {
@@ -112,14 +110,14 @@ impl Database {
     }
 
     /// Get values of `tags` for songs with `ids`.
-    pub fn metadata(&self, (ids, tags): (Vec<u32>, Vec<String>)) -> Response {
+    pub fn metadata(&self, (ids, tags): (Vec<u32>, Vec<TagKey>)) -> Response {
         let values: Vec<_> = ids
             .into_iter()
             .map(|id| {
                 if let Ok(i) = self.data_rows.binary_search_by_key(&id, |row| row.id) {
                     let data = tags.iter().cloned().map(|tag| {
                         let value = self.data_rows[i].song.song_meta.get(&tag).cloned().into();
-                        (tag, value)
+                        (tag.to_string(), value)
                     });
 
                     Some(Map::from_iter(data))
@@ -135,7 +133,7 @@ impl Database {
     /// Get unique values of `tag` among songs matching `filter_expr`, grouped by tags in `group_by`.
     pub fn unique(
         &self,
-        (tag, filter_expr, group_by): (String, FilterExpr, Vec<String>),
+        (tag, filter_expr, group_by): (TagKey, FilterExpr, Vec<TagKey>),
     ) -> Response {
         let mut groups = HashMap::new();
         let filtered = self
@@ -161,10 +159,11 @@ impl Database {
                 let data = group_by
                     .iter()
                     .cloned()
+                    .map(|tag_key| tag_key.to_string())
                     .zip(combination.into_iter().map(|value| value.into()));
                 let mut json_map = Map::from_iter(data);
                 let values: Vec<_> = values.into_iter().collect();
-                json_map.insert(tag.clone(), values.into());
+                json_map.insert(tag.to_string(), values.into());
 
                 json_map
             })

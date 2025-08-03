@@ -74,15 +74,17 @@ static TAG_KEYS: [StandardTagKey; 30] = [
     StandardTagKey::TrackTitle,
 ];
 
-pub enum TagKind {
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub enum TagKeyKind {
     String,
     Integer,
     OutOf, // e.g. track 3 out of 12, written in metadata as "3/12"
 }
 
-pub struct Tag {
-    key: StandardTagKey,
-    kind: TagKind,
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub struct TagKey {
+    pub key: StandardTagKey,
+    pub kind: TagKeyKind,
 }
 
 lazy_static! {
@@ -95,7 +97,13 @@ lazy_static! {
     };
 }
 
-impl FromStr for Tag {
+impl Display for TagKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", utils::enum_stringify!(self.key).to_lowercase())
+    }
+}
+
+impl FromStr for TagKey {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
@@ -105,29 +113,29 @@ impl FromStr for Tag {
             bail!(MyError::Syntax("Invalid tag name".into()));
         };
         let kind = match key {
-            Bpm => TagKind::Integer,
-            DiscNumber | MovementNumber | TrackNumber => TagKind::OutOf,
-            _ => TagKind::String,
+            Bpm => TagKeyKind::Integer,
+            DiscNumber | MovementNumber | TrackNumber => TagKeyKind::OutOf,
+            _ => TagKeyKind::String,
         };
 
         Ok(Self { key, kind })
     }
 }
 
-impl TryFrom<StandardTagKey> for Tag {
+impl TryFrom<StandardTagKey> for TagKey {
     type Error = anyhow::Error;
 
     fn try_from(s_key: StandardTagKey) -> Result<Self> {
         use StandardTagKey::*;
 
         let key = match TAG_KEYS.iter().find(|key| &&s_key == key) {
-            Some(key) => key.clone(),
+            Some(key) => *key,
             None => bail!(MyError::Syntax("Invalid tag key".into())),
         };
         let kind = match key {
-            Bpm => TagKind::Integer,
-            DiscNumber | MovementNumber | TrackNumber => TagKind::OutOf,
-            _ => TagKind::String,
+            Bpm => TagKeyKind::Integer,
+            DiscNumber | MovementNumber | TrackNumber => TagKeyKind::OutOf,
+            _ => TagKeyKind::String,
         };
 
         Ok(Self { key, kind })

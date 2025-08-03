@@ -14,11 +14,11 @@ use symphonia::core::{
     probe::{Hint, ProbeResult, ProbedMetadata},
 };
 
-use crate::{error::MyError, utils};
+use crate::{error::MyError, model::tag_key::TagKey, utils};
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct SongMeta {
-    data: HashMap<String, String>,
+    data: HashMap<TagKey, String>,
     // TODO: cover_art: (),
 }
 
@@ -30,7 +30,6 @@ pub struct AudioMeta {
     pub duration: Option<u64>, // in seconds
 }
 
-#[derive(Debug)]
 pub struct Song {
     pub path: PathBuf, // absolute
     pub song_meta: SongMeta,
@@ -41,38 +40,19 @@ impl SongMeta {
     pub fn from_revision(revision: &MetadataRevision) -> Self {
         let mut data = HashMap::new();
         for tag in revision.tags() {
-            if let Some(key) = tag.std_key {
-                let name = utils::enum_stringify!(key).to_lowercase();
-                let value = match name.as_str() {
-                    // all this so that we can sort by tracknumber properly...
-                    "tracknumber" => {
-                        let value = tag.value.to_string();
-                        let split: Vec<_> = value.split('/').collect();
-                        if split.len() == 1 {
-                            value
-                        } else {
-                            let (n, out_of) = (
-                                split[0].parse::<u32>().unwrap(),
-                                split[1].parse::<u32>().unwrap(),
-                            );
-                            format!("{:08}/{:08}", n, out_of)
-                        }
-                    }
-                    other => tag.value.to_string(),
-                };
-
-                data.insert(name, value);
+            if let Some(tag_key) = tag.std_key.and_then(|key| TagKey::try_from(key).ok()) {
+                data.insert(tag_key, tag.value.to_string());
             }
         }
 
         Self { data }
     }
 
-    pub fn contains(&self, tag: &str) -> bool {
+    pub fn contains(&self, tag: &TagKey) -> bool {
         self.data.contains_key(tag)
     }
 
-    pub fn get(&self, tag: &str) -> Option<&String> {
+    pub fn get(&self, tag: &TagKey) -> Option<&String> {
         self.data.get(tag)
     }
 }

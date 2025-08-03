@@ -4,4 +4,4 @@ pub mod playlist;
 pub mod request;
 pub mod response;
 pub mod song;
-pub mod tag;
+pub mod tag_key;
