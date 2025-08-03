@@ -59,7 +59,7 @@ impl RegexFilter {
 
 impl FilterExprSymbol {
     pub fn try_into_filter((tag, comparator, pattern): FilterArgs) -> Result<Self> {
-        let tag_key = tag.parse::<TagKey>()?;
+        let tag_key = tag.as_str().try_into()?;
         let boxed_filter = match comparator.as_str() {
             "==" => Box::new(RegexFilter::new(tag_key, pattern, false)?),
             "!=" => Box::new(RegexFilter::new(tag_key, pattern, true)?),

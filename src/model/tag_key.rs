@@ -74,14 +74,14 @@ static TAG_KEYS: [StandardTagKey; 30] = [
     StandardTagKey::TrackTitle,
 ];
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TagKeyKind {
     String,
     Integer,
     OutOf, // e.g. track 3 out of 12, written in metadata as "3/12"
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TagKey {
     pub key: StandardTagKey,
     pub kind: TagKeyKind,
@@ -103,13 +103,13 @@ impl Display for TagKey {
     }
 }
 
-impl FromStr for TagKey {
-    type Err = anyhow::Error;
+impl TryFrom<&str> for TagKey {
+    type Error = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self> {
+    fn try_from(s: &str) -> Result<Self> {
         use StandardTagKey::*;
 
-        let Some(key) = TAG_MAP.get(s).cloned() else {
+        let Some(key) = TAG_MAP.get(&s).cloned() else {
             bail!(MyError::Syntax("Invalid tag name".into()));
         };
         let kind = match key {
@@ -126,18 +126,6 @@ impl TryFrom<StandardTagKey> for TagKey {
     type Error = anyhow::Error;
 
     fn try_from(s_key: StandardTagKey) -> Result<Self> {
-        use StandardTagKey::*;
-
-        let key = match TAG_KEYS.iter().find(|key| &&s_key == key) {
-            Some(key) => *key,
-            None => bail!(MyError::Syntax("Invalid tag key".into())),
-        };
-        let kind = match key {
-            Bpm => TagKeyKind::Integer,
-            DiscNumber | MovementNumber | TrackNumber => TagKeyKind::OutOf,
-            _ => TagKeyKind::String,
-        };
-
-        Ok(Self { key, kind })
+        Self::try_from(utils::enum_stringify!(s_key).to_lowercase().as_str())
     }
 }

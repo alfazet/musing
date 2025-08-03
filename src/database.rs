@@ -9,7 +9,9 @@ use std::{
 };
 
 use crate::{
-    model::{filter::FilterExpr, response::Response, song::*, tag_key::TagKey},
+    model::{
+        comparator::Comparator, filter::FilterExpr, response::Response, song::*, tag_key::TagKey,
+    },
     utils,
 };
 
@@ -85,17 +87,14 @@ impl Database {
         self.last_update = SystemTime::now();
     }
 
-    /// Get ids of songs matching `filter_expr`, sorted by the values of tags in `sort_by`.
-    pub fn select(&self, (filter_expr, sort_by): (FilterExpr, Vec<TagKey>)) -> Response {
-        let cmp = |lhs: &SongMeta, rhs: &SongMeta| -> Ordering {
-            for tag in sort_by.iter() {
-                match (lhs.get(tag)).cmp(&rhs.get(tag)) {
-                    Ordering::Equal => (),
-                    other => return other,
-                }
-            }
-
-            Ordering::Equal
+    /// Get ids of songs matching `filter_expr`, sorted by the comparators in `sort_by`.
+    pub fn select(&self, (filter_expr, sort_by): (FilterExpr, Vec<Comparator>)) -> Response {
+        let compare = |lhs: &SongMeta, rhs: &SongMeta| -> Ordering {
+            sort_by
+                .iter()
+                .map(|cmp| cmp.cmp(lhs, rhs))
+                .find(|ord| *ord != Ordering::Equal)
+                .unwrap_or(Ordering::Equal)
         };
 
         let mut filtered: Vec<_> = self
@@ -103,7 +102,7 @@ impl Database {
             .iter()
             .filter(|row| filter_expr.evaluate(&row.song))
             .collect();
-        filtered.sort_by(|lhs, rhs| cmp(&lhs.song.song_meta, &rhs.song.song_meta));
+        filtered.sort_by(|lhs, rhs| compare(&lhs.song.song_meta, &rhs.song.song_meta));
         let ids: Vec<_> = filtered.into_iter().map(|row| row.id).collect();
 
         Response::new_ok().with_item("ids".into(), &ids)
@@ -172,3 +171,5 @@ impl Database {
         Response::new_ok().with_item("values".into(), &values)
     }
 }
+
+// write some tests

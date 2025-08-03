@@ -11,14 +11,14 @@ pub struct Comparator {
     inverted: bool,
 }
 
-impl FromStr for Comparator {
-    type Err = anyhow::Error;
+impl TryFrom<&str> for Comparator {
+    type Error = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self> {
-        let (tag_key, inverted) = if s.starts_with('!') {
-            (s[1..].parse::<TagKey>()?, true)
+    fn try_from(s: &str) -> Result<Self> {
+        let (tag_key, inverted) = if let Some(s) = s.strip_prefix('!') {
+            (s.try_into()?, true)
         } else {
-            (s.parse::<TagKey>()?, false)
+            (s.try_into()?, false)
         };
 
         Ok(Self { tag_key, inverted })
@@ -28,7 +28,7 @@ impl FromStr for Comparator {
 impl Comparator {
     fn cmp_values(&self, lhs: &str, rhs: &str) -> Ordering {
         match self.tag_key.kind {
-            TagKeyKind::String => lhs.cmp(&rhs),
+            TagKeyKind::String => lhs.cmp(rhs),
             TagKeyKind::Integer => {
                 let lhs = lhs.parse::<i32>();
                 let rhs = rhs.parse::<i32>();
@@ -48,9 +48,9 @@ impl Comparator {
         }
     }
 
-    pub fn cmp(&self, lhs: &Song, rhs: &Song) -> Ordering {
-        let lhs = lhs.song_meta.get(&self.tag_key);
-        let rhs = rhs.song_meta.get(&self.tag_key);
+    pub fn cmp(&self, lhs: &SongMeta, rhs: &SongMeta) -> Ordering {
+        let lhs = lhs.get(&self.tag_key);
+        let rhs = rhs.get(&self.tag_key);
         let ordering = match (lhs, rhs) {
             (Some(lhs), Some(rhs)) => self.cmp_values(lhs, rhs),
             (Some(lhs), None) => Ordering::Greater,

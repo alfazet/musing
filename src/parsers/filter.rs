@@ -180,10 +180,10 @@ fn into_rpn(infix: Vec<Token>) -> Result<Vec<Token>> {
     Ok(rpn)
 }
 
-impl FromStr for FilterExpr {
-    type Err = anyhow::Error;
+impl TryFrom<&str> for FilterExpr {
+    type Error = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self> {
+    fn try_from(s: &str) -> Result<Self> {
         let infix = tokenize(s)?;
         let rpn = into_rpn(infix)?;
         let mut filter_expr_symbols = Vec::new();
