@@ -836,6 +836,7 @@ dependencies = [
  "crossbeam-channel",
  "dirs",
  "erased-serde",
+ "lazy_static",
  "log",
  "rand",
  "regex",

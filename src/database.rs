@@ -17,6 +17,7 @@ use crate::{
 pub struct DataRow {
     pub id: u32,
     pub song: Song,
+    pub to_delete: bool,
 }
 
 #[derive(Debug)]
@@ -36,6 +37,7 @@ impl Database {
                 Ok(song) => Some(DataRow {
                     id: id as u32 + id_offset + 1,
                     song,
+                    to_delete: false,
                 }),
                 Err(e) => {
                     log::error!("{}", e);
@@ -70,8 +72,11 @@ impl Database {
                         row.song = song;
                     }
                 }
+            } else {
+                row.to_delete = true;
             }
         }
+        self.data_rows.retain(|row| !row.to_delete);
         let new_files = utils::walk_dir(&self.root_dir, self.last_update, &self.ok_ext);
         let mut new_data_rows = Self::to_data_rows(
             &new_files,
