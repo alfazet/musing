@@ -58,6 +58,7 @@ impl Comparator {
             (None, None) => Ordering::Equal,
         };
 
+        let v = Vec::<i32>::new();
         if self.inverted {
             ordering.reverse()
         } else {

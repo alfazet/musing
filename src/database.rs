@@ -30,10 +30,8 @@ pub struct Database {
 
 impl Database {
     fn to_data_rows(files: &[PathBuf], id_offset: u32) -> impl Iterator<Item = DataRow> {
-        files
-            .iter()
-            .enumerate()
-            .filter_map(move |(id, file)| match Song::try_from_file(file) {
+        files.iter().enumerate().filter_map(move |(id, file)| {
+            match Song::try_from(file.as_path()) {
                 Ok(song) => Some(DataRow {
                     id: id as u32 + id_offset + 1,
                     song,
@@ -43,7 +41,8 @@ impl Database {
                     log::error!("{}", e);
                     None
                 }
-            })
+            }
+        })
     }
 
     pub fn from_dir(dir: &Path, ok_ext: Vec<String>) -> Self {
@@ -68,7 +67,7 @@ impl Database {
                 .and_then(|metadata| metadata.modified())
             {
                 if mod_time >= self.last_update {
-                    if let Ok(song) = Song::try_from_file(&row.song.path) {
+                    if let Ok(song) = Song::try_from(row.song.path.as_path()) {
                         row.song = song;
                     }
                 }

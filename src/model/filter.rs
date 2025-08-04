@@ -57,8 +57,10 @@ impl RegexFilter {
     }
 }
 
-impl FilterExprSymbol {
-    pub fn try_into_filter((tag, comparator, pattern): FilterArgs) -> Result<Self> {
+impl TryFrom<FilterArgs> for FilterExprSymbol {
+    type Error = anyhow::Error;
+
+    fn try_from((tag, comparator, pattern): FilterArgs) -> Result<Self> {
         let tag_key = tag.as_str().try_into()?;
         let boxed_filter = match comparator.as_str() {
             "==" => Box::new(RegexFilter::new(tag_key, pattern, false)?),
@@ -70,8 +72,10 @@ impl FilterExprSymbol {
     }
 }
 
-impl FilterExpr {
-    pub fn try_new(symbols: Vec<FilterExprSymbol>) -> Result<Self> {
+impl TryFrom<Vec<FilterExprSymbol>> for FilterExpr {
+    type Error = anyhow::Error;
+
+    fn try_from(symbols: Vec<FilterExprSymbol>) -> Result<Self> {
         use FilterExprOperator::*;
         use FilterExprSymbol::*;
 
@@ -93,7 +97,9 @@ impl FilterExpr {
             bail!(MyError::Syntax("Invalid filter expression".into()));
         }
     }
+}
 
+impl FilterExpr {
     // unwraps here will never panic because all
     // filter expressions pass a validity check on creation
     pub fn evaluate(&self, song: &Song) -> bool {

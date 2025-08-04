@@ -69,7 +69,7 @@ mod test {
             let _ = File::create(&path.join(format!("{}-test{}.mp3", prefix, i)));
         }
         let ok_ext = vec!["mp3".into()];
-        let files = walk_dir(&path, timestamp, ok_ext);
+        let files = walk_dir(&path, timestamp, &ok_ext);
         for file in files {
             assert!(file.exists() && file.is_file() && file.extension().unwrap() == "mp3");
         }

@@ -194,13 +194,13 @@ impl TryFrom<&str> for FilterExpr {
                     OP_OR => FilterExprSymbol::Operator(FilterExprOperator::OpOr),
                     _ => unreachable!(),
                 },
-                Token::Filter(args) => FilterExprSymbol::try_into_filter(args)?,
+                Token::Filter(args) => FilterExprSymbol::try_from(args)?,
                 // there are no parentheses in rpn
                 _ => unreachable!(),
             };
             filter_expr_symbols.push(symbol);
         }
 
-        FilterExpr::try_new(filter_expr_symbols)
+        FilterExpr::try_from(filter_expr_symbols)
     }
 }

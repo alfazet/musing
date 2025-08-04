@@ -80,8 +80,10 @@ impl AudioMeta {
     }
 }
 
-impl Song {
-    pub fn try_from_file(path: &Path) -> Result<Self> {
+impl TryFrom<&Path> for Song {
+    type Error = anyhow::Error;
+
+    fn try_from(path: &Path) -> Result<Self> {
         let mut probe_res = get_probe_result(path)?;
         let song_meta = probe_res
             .metadata
