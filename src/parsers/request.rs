@@ -150,7 +150,7 @@ mod test {
     #[test]
     fn filter_expr() {
         let res = tokenize(
-            &r#"select [(albumartist=="ILLENIUM" & album!="a") | tracktitle=="e"] date,tracktitle"#,
+            r#"select [(albumartist=="ILLENIUM" & album!="a") | tracktitle=="e"] date,tracktitle"#,
         )
         .unwrap();
         assert_eq!(

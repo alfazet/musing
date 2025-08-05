@@ -240,7 +240,5 @@ mod test {
             seen.insert(cur.unwrap().queue_id);
             queue.move_next();
         }
-
-        assert!(true);
     }
 }

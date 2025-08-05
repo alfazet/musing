@@ -66,7 +66,7 @@ mod test {
         let path = PathBuf::from("/tmp");
         let timestamp = SystemTime::now();
         for i in 0..10 {
-            let _ = File::create(&path.join(format!("{}-test{}.mp3", prefix, i)));
+            let _ = File::create(path.join(format!("{}-test{}.mp3", prefix, i)));
         }
         let ok_ext = vec!["mp3".into()];
         let files = walk_dir(&path, timestamp, &ok_ext);
@@ -74,7 +74,7 @@ mod test {
             assert!(file.exists() && file.is_file() && file.extension().unwrap() == "mp3");
         }
         for i in 0..10 {
-            let _ = fs::remove_file(&path.join(format!("{}-test{}.mp3", prefix, i)));
+            let _ = fs::remove_file(path.join(format!("{}-test{}.mp3", prefix, i)));
         }
     }
 }
