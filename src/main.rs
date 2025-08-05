@@ -1,4 +1,3 @@
-use anyhow::Result;
 use clap::Parser;
 
 use crate::config::{CliOptions, Config};
@@ -14,36 +13,24 @@ mod utils;
 mod model;
 mod parsers;
 
-async fn run(cli_options: CliOptions) -> Result<()> {
-    let config = Config::from_file(cli_options.config_file.as_deref())?.merge_with_cli(cli_options);
-    let Config {
-        server_config,
-        player_config,
-    } = config;
-
-    Ok(())
-
-    // let (tx, player_task) = player::run(player_config)?;
-    // let server_task =
-    // let res = tokio::select! {
-    //     res = server::run(server_config, tx) => res,
-    //     _ = tokio::signal::ctrl_c() => Ok(()),
-    // };
-    // let _ = player_task.await;
-
-    // res
+fn setup_logging(cli_opts: &CliOptions) {
+    if cli_opts.log_stderr {
+        simple_logging::log_to_stderr(log::LevelFilter::max());
+    } else {
+        let default_log_file = dirs::cache_dir()
+            .unwrap_or(dirs::home_dir().unwrap())
+            .join(constants::DEFAULT_LOG_FILE);
+        let log_file = cli_opts.log_file.as_deref().unwrap_or(&default_log_file);
+        let _ = simple_logging::log_to_file(log_file, log::LevelFilter::max());
+    }
 }
 
 #[tokio::main]
 async fn main() {
-    let _ = simple_logging::log_to_file(
-        dirs::cache_dir()
-            .unwrap_or(dirs::home_dir().unwrap())
-            .join(constants::DEFAULT_LOG_FILE),
-        log::LevelFilter::max(),
-    );
-    let cli_options = CliOptions::parse();
-    if let Err(e) = run(cli_options).await {
-        log::error!("{}", e);
+    let cli_opts = CliOptions::parse();
+    setup_logging(&cli_opts);
+    match Config::from_file(cli_opts.config_file.as_deref()).map(|c| c.merge_with_cli(cli_opts)) {
+        Ok(config) => server::run(config).await,
+        Err(e) => log::error!("{}", e),
     }
 }

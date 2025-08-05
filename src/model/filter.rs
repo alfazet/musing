@@ -76,19 +76,18 @@ impl TryFrom<Vec<FilterExprSymbol>> for FilterExpr {
     type Error = anyhow::Error;
 
     fn try_from(symbols: Vec<FilterExprSymbol>) -> Result<Self> {
-        use FilterExprOperator::*;
-        use FilterExprSymbol::*;
+        use FilterExprSymbol as FESymbol;
 
         let mut stack_size = 0;
         for symbol in symbols.iter() {
             match symbol {
-                Operator(op) => {
+                FESymbol::Operator(op) => {
                     if stack_size < 2 {
                         bail!(MyError::Syntax("Invalid filter expression".into()));
                     }
                     stack_size -= 1;
                 }
-                Filter(filter) => stack_size += 1,
+                FESymbol::Filter(filter) => stack_size += 1,
             }
         }
         if stack_size == 1 {
@@ -103,22 +102,22 @@ impl FilterExpr {
     // unwraps here will never panic because all
     // filter expressions pass a validity check on creation
     pub fn evaluate(&self, song: &Song) -> bool {
-        use FilterExprOperator::*;
-        use FilterExprSymbol::*;
+        use FilterExprOperator as FEOperator;
+        use FilterExprSymbol as FESymbol;
 
         let mut stack = Vec::new();
         for symbol in self.symbols.iter() {
             match symbol {
-                Operator(op) => {
+                FESymbol::Operator(op) => {
                     let f1 = stack.pop().unwrap();
                     let f2 = stack.pop().unwrap();
                     let res = match op {
-                        OpAnd => f1 & f2,
-                        OpOr => f1 | f2,
+                        FEOperator::OpAnd => f1 & f2,
+                        FEOperator::OpOr => f1 | f2,
                     };
                     stack.push(res);
                 }
-                Filter(filter) => stack.push(filter.matches(song)),
+                FESymbol::Filter(filter) => stack.push(filter.matches(song)),
             }
         }
 

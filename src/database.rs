@@ -22,8 +22,8 @@ pub struct DataRow {
 }
 
 pub struct Database {
-    root_dir: PathBuf,
-    ok_ext: Vec<String>,
+    music_dir: PathBuf,
+    allowed_exts: Vec<String>,
     data_rows: Vec<DataRow>,
     last_update: SystemTime,
 }
@@ -45,14 +45,14 @@ impl Database {
         })
     }
 
-    pub fn from_dir(dir: &Path, ok_ext: Vec<String>) -> Self {
-        let files = utils::walk_dir(dir, SystemTime::UNIX_EPOCH, &ok_ext);
+    pub fn from_dir(dir: &Path, allowed_exts: Vec<String>) -> Self {
+        let files = utils::walk_dir(dir, SystemTime::UNIX_EPOCH, &allowed_exts);
         let data_rows = Self::to_data_rows(&files, 0).collect();
         let last_update = SystemTime::now();
 
         Self {
-            root_dir: dir.to_path_buf(),
-            ok_ext,
+            music_dir: dir.to_path_buf(),
+            allowed_exts,
             data_rows,
             last_update,
         }
@@ -76,7 +76,7 @@ impl Database {
             }
         }
         self.data_rows.retain(|row| !row.to_delete);
-        let new_files = utils::walk_dir(&self.root_dir, self.last_update, &self.ok_ext);
+        let new_files = utils::walk_dir(&self.music_dir, self.last_update, &self.allowed_exts);
         let mut new_data_rows = Self::to_data_rows(
             &new_files,
             self.data_rows.last().map(|row| row.id).unwrap_or(0),
@@ -114,7 +114,7 @@ impl Database {
             .map(|id| {
                 if let Ok(i) = self.data_rows.binary_search_by_key(&id, |row| row.id) {
                     let data = tags.iter().cloned().map(|tag| {
-                        let value = self.data_rows[i].song.song_meta.get(&tag).cloned().into();
+                        let value = self.data_rows[i].song.song_meta.get(&tag).into();
                         (tag.to_string(), value)
                     });
 
@@ -142,14 +142,14 @@ impl Database {
         for meta in filtered {
             let combination: Vec<_> = group_by
                 .iter()
-                .map(|group_tag| meta.get(group_tag).cloned())
+                .map(|group_tag| meta.get(group_tag))
                 .collect();
             groups
                 .entry(combination)
                 .and_modify(|set: &mut HashSet<_>| {
-                    set.insert(meta.get(&tag).cloned());
+                    set.insert(meta.get(&tag));
                 })
-                .or_insert([meta.get(&tag).cloned()].into());
+                .or_insert([meta.get(&tag)].into());
         }
         let values: Vec<_> = groups
             .into_iter()
@@ -170,5 +170,3 @@ impl Database {
         Response::new_ok().with_item("values".into(), &values)
     }
 }
-
-// write some tests

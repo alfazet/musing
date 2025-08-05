@@ -107,14 +107,14 @@ impl TryFrom<&str> for TagKey {
     type Error = anyhow::Error;
 
     fn try_from(s: &str) -> Result<Self> {
-        use StandardTagKey::*;
+        use StandardTagKey as STKey;
 
         let Some(key) = TAG_MAP.get(&s).cloned() else {
             bail!(MyError::Syntax("Invalid tag name".into()));
         };
         let kind = match key {
-            Bpm => TagKeyKind::Integer,
-            DiscNumber | MovementNumber | TrackNumber => TagKeyKind::OutOf,
+            STKey::Bpm => TagKeyKind::Integer,
+            STKey::DiscNumber | STKey::MovementNumber | STKey::TrackNumber => TagKeyKind::OutOf,
             _ => TagKeyKind::String,
         };
 

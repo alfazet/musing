@@ -142,3 +142,24 @@ pub fn tokenize(s: &str) -> Result<Vec<String>> {
 
     Ok(tokens)
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn filter_expr() {
+        let res = tokenize(
+            &r#"select [(albumartist=="ILLENIUM" & album!="a") | tracktitle=="e"] date,tracktitle"#,
+        )
+        .unwrap();
+        assert_eq!(
+            res,
+            vec![
+                "select".to_string(),
+                r#"(albumartist=="ILLENIUM" & album!="a") | tracktitle=="e""#.to_string(),
+                "date,tracktitle".to_string()
+            ]
+        );
+    }
+}

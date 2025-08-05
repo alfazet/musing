@@ -7,21 +7,25 @@ use crate::constants;
 #[derive(Parser, Debug)]
 #[command(version, about, author, long_about = None)]
 pub struct CliOptions {
-    /// Path to the music directory, all paths will be processed as relative to it.
-    #[arg(short = 'm', long = "music")]
-    pub music_dir: Option<PathBuf>,
-
     /// Port on which rustmpd will listen for clients.
     #[arg(short = 'p', long = "port")]
     pub port: Option<u16>,
 
-    /// Audio device to be used for playback
-    #[arg(short = 'd', long = "device")]
-    pub audio_device_name: Option<String>,
+    /// Path to the music directory, all paths will be processed as relative to it.
+    #[arg(short = 'm', long = "music")]
+    pub music_dir: Option<PathBuf>,
 
     /// Path to the rustmpd.toml config file.
     #[arg(short = 'c', long = "config")]
     pub config_file: Option<PathBuf>,
+
+    /// Path to the log file.
+    #[arg(short = 'l', long = "log")]
+    pub log_file: Option<PathBuf>,
+
+    /// Log to stderr instead
+    #[arg(long = "stderr")]
+    pub log_stderr: bool,
 }
 
 #[derive(Debug)]
@@ -31,8 +35,9 @@ pub struct ServerConfig {
 
 #[derive(Debug)]
 pub struct PlayerConfig {
+    pub default_audio_device: String,
     pub music_dir: PathBuf,
-    pub audio_device_name: String,
+    pub allowed_exts: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -49,42 +54,24 @@ impl Default for ServerConfig {
     }
 }
 
-impl ServerConfig {
-    // pub fn new() -> Self {
-    //     ServerConfig::default()
-    // }
-
-    // pub fn from_toml_pairs() -> Result<Self> {
-    //     // TODO: this
-    //     Ok(ServerConfig::default())
-    // }
-}
+impl ServerConfig {}
 
 impl Default for PlayerConfig {
     fn default() -> Self {
         Self {
+            default_audio_device: constants::DEFAULT_AUDIO_DEVICE.to_string(),
             music_dir: constants::DEFAULT_MUSIC_DIR.into(),
-            audio_device_name: constants::DEFAULT_AUDIO_DEVICE.to_string(),
+            allowed_exts: constants::DEFAULT_ALLOWED_EXTS
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
         }
     }
 }
 
-impl PlayerConfig {
-    // fn new() -> Self {
-    //     PlayerConfig::default()
-    // }
-
-    // pub fn from_toml_pairs() -> Result<Self> {
-    //     // TODO: this
-    //     Ok(PlayerConfig::default())
-    // }
-}
+impl PlayerConfig {}
 
 impl Config {
-    // pub fn new() -> Self {
-    //     Config::default()
-    // }
-
     pub fn from_file(_path: Option<&Path>) -> Result<Self> {
         // let default_path = dirs::config_dir()
         //     .unwrap_or(dirs::home_dir().unwrap())
@@ -101,12 +88,11 @@ impl Config {
     pub fn merge_with_cli(self, cli_opts: CliOptions) -> Self {
         let server_config = ServerConfig {
             port: cli_opts.port.unwrap_or(self.server_config.port),
+            ..self.server_config
         };
         let player_config = PlayerConfig {
             music_dir: cli_opts.music_dir.unwrap_or(self.player_config.music_dir),
-            audio_device_name: cli_opts
-                .audio_device_name
-                .unwrap_or(self.player_config.audio_device_name),
+            ..self.player_config
         };
 
         Config {
