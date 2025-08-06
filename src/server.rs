@@ -1,18 +1,18 @@
-use anyhow::Result;
-use std::io::{Error as IoError, ErrorKind as IoErrorKind};
+use anyhow::{Result, anyhow};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     signal,
-    sync::{broadcast, mpsc},
+    sync::{broadcast, mpsc, oneshot},
 };
 
 use crate::{
     config::{Config, ServerConfig},
-    model::request::*,
+    model::{request::*, response::Response},
+    player,
 };
 
-type SenderToPlayer = mpsc::UnboundedSender<()>;
+type SenderToPlayer = mpsc::UnboundedSender<Request>;
 type ShutdownSender = broadcast::Sender<()>;
 type ShutdownReceiver = broadcast::Receiver<()>;
 
@@ -62,27 +62,15 @@ impl ClientHandler {
                 break;
             }
             let s = String::from_utf8(buf)?;
-            /*
-            let request_kind = match RequestKind::try_from(s.as_str()) {
-                Ok(kind) => {
-                    use RequestKind as Kind;
-                    match kind {
-                        Kind::Select(args) => {
-                            let SelectArgs(filter_expr, sort_by) = args;
-                            println!("select {:?}", sort_by);
-                        }
-                        _ => todo!(),
-                    }
+            let response = match RequestKind::try_from(s.as_str()) {
+                Ok(request_kind) => {
+                    let (tx_response, rx_response) = oneshot::channel();
+                    let _ = self.tx.send(Request::new(request_kind, tx_response));
+                    rx_response.await?.into_json_string()?
                 }
-                Err(e) => {
-                    let _ = self.stream.write_all(e.to_string().as_bytes()).await;
-                }
+                Err(e) => Response::new_err(e.to_string()).into_json_string()?,
             };
-            */
-
-            // parse the message into a Request
-            // send the Request bundled with the oneshot channel the the player
-            // await the (json) response and send it back
+            let _ = self.stream.write_all(response.as_bytes()).await?;
         }
 
         Ok(())
@@ -121,10 +109,11 @@ pub async fn run(config: Config) {
     let (tx, rx) = mpsc::unbounded_channel();
     let (tx_shutdown, rx_shutdown) = broadcast::channel(1);
     let server = Server::new(server_config);
-    // let _ = tokio::spawn(async move || player::run(player_config, rx).await);
+    let player_task = tokio::spawn(async move { player::run(player_config, rx).await });
 
     let res = tokio::select! {
         res = server.run(tx, tx_shutdown) => res,
+        res = player_task => res.map_err(|e| anyhow!(e)),
         _ = signal::ctrl_c() => Ok(()),
     };
     if let Err(e) = res {
@@ -133,4 +122,5 @@ pub async fn run(config: Config) {
 
     // at this point tx_shutdown was dropped => all client handlers ended => ...
     // ... all clones of tx got dropped => the player task ended
+    // or the player task could've been the one to end first (due to a panic)
 }

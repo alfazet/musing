@@ -15,6 +15,7 @@ impl From<(u32, u32)> for Entry {
 
 #[derive(Default)]
 pub struct Queue {
+    // TODO: yea so this isn't Send...
     rng: ThreadRng,
     list: Vec<Entry>,
     randomized: Option<Vec<u32>>,

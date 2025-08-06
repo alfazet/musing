@@ -15,10 +15,10 @@ use crate::{
     utils,
 };
 
-pub struct DataRow {
-    pub id: u32,
-    pub song: Song,
-    pub to_delete: bool,
+struct DataRow {
+    id: u32,
+    song: Song,
+    to_delete: bool,
 }
 
 pub struct Database {
@@ -45,13 +45,13 @@ impl Database {
         })
     }
 
-    pub fn from_dir(dir: &Path, allowed_exts: Vec<String>) -> Self {
-        let files = utils::walk_dir(dir, SystemTime::UNIX_EPOCH, &allowed_exts);
+    pub fn new(music_dir: &Path, allowed_exts: Vec<String>) -> Self {
+        let files = utils::walk_dir(music_dir, SystemTime::UNIX_EPOCH, &allowed_exts);
         let data_rows = Self::to_data_rows(&files, 0).collect();
         let last_update = SystemTime::now();
 
         Self {
-            music_dir: dir.to_path_buf(),
+            music_dir: music_dir.to_path_buf(),
             allowed_exts,
             data_rows,
             last_update,

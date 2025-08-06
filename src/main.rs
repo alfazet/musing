@@ -2,6 +2,7 @@ use clap::Parser;
 
 use crate::config::{CliOptions, Config};
 
+mod audio;
 mod config;
 mod constants;
 mod database;

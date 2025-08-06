@@ -7,7 +7,7 @@ use crate::error::MyError;
 
 enum ResponseKind {
     Ok,
-    Err(MyError),
+    Err(String),
 }
 
 struct ResponseItem {
@@ -45,7 +45,7 @@ impl Response {
         }
     }
 
-    pub fn new_err(reason: MyError) -> Self {
+    pub fn new_err(reason: String) -> Self {
         Self {
             kind: ResponseKind::Err(reason),
             items: None,

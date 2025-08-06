@@ -126,13 +126,6 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>> {
                 tokens.push(Token::Filter(filter));
                 already = true;
             })?,
-            // Some(c) => match tokenize_filter(&mut s) {
-            //     Ok(filter) => {
-            //         tokens.push(Token::Filter(filter));
-            //         already = true;
-            //     }
-            //     Err(e) => bail!(MyError::Syntax(e.to_string())),
-            // },
             None => break,
         }
         if !already {
