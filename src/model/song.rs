@@ -112,7 +112,7 @@ impl TryFrom<&Path> for Song {
 }
 
 fn get_probe_result(path: &Path) -> Result<ProbeResult> {
-    let file = File::open(path).map_err(|e| MyError::File(e.to_string()))?;
+    let file = File::open(path)?;
     let source = Box::new(file);
     let mss = MediaSourceStream::new(source, Default::default());
     let format_opts: FormatOptions = Default::default();

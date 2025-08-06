@@ -87,7 +87,7 @@ impl Database {
     }
 
     /// Get ids of songs matching `filter_expr`, sorted by the comparators in `sort_by`.
-    pub fn select(&self, (filter_expr, sort_by): (FilterExpr, Vec<Comparator>)) -> Response {
+    fn select(&self, filter_expr: FilterExpr, sort_by: Vec<Comparator>) -> Vec<u32> {
         let compare = |lhs: &SongMeta, rhs: &SongMeta| -> Ordering {
             sort_by
                 .iter()
@@ -102,8 +102,18 @@ impl Database {
             .filter(|row| filter_expr.evaluate(&row.song))
             .collect();
         filtered.sort_by(|lhs, rhs| compare(&lhs.song.song_meta, &rhs.song.song_meta));
-        let ids: Vec<_> = filtered.into_iter().map(|row| row.id).collect();
 
+        filtered.into_iter().map(|row| row.id).collect()
+    }
+
+    /// ("inner" because this returns a Vec "inside" = to other rustmpd functions)
+    pub fn select_inner(&self, (filter_expr, sort_by): (FilterExpr, Vec<Comparator>)) -> Vec<u32> {
+        self.select(filter_expr, sort_by)
+    }
+
+    /// ("outer" because this returns JSON "outside" = to the client)
+    pub fn select_outer(&self, (filter_expr, sort_by): (FilterExpr, Vec<Comparator>)) -> Response {
+        let ids = self.select(filter_expr, sort_by);
         Response::new_ok().with_item("ids".into(), &ids)
     }
 

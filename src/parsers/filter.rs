@@ -7,12 +7,12 @@ use std::{
 use crate::{error::MyError, model::filter::*};
 
 #[derive(Clone, Debug, PartialEq)]
-struct Operator(u8);
+pub struct Operator(u8);
 const OP_AND: Operator = Operator(1);
 const OP_OR: Operator = Operator(2);
 
 #[derive(Clone, Debug)]
-enum Token {
+pub enum Token {
     Operator(Operator),
     Filter(FilterArgs),
     OpeningParen,
@@ -111,7 +111,7 @@ fn tokenize_filter(s: &mut Peekable<str::Chars>) -> Result<FilterArgs> {
     Ok((tag, comparator, pattern))
 }
 
-fn tokenize(s: &str) -> Result<Vec<Token>> {
+pub fn tokenize(s: &str) -> Result<Vec<Token>> {
     let mut tokens = Vec::new();
     let mut s = s.chars().peekable();
     loop {
@@ -122,13 +122,17 @@ fn tokenize(s: &str) -> Result<Vec<Token>> {
             Some(')') => tokens.push(Token::ClosingParen),
             Some('&') => tokens.push(Token::Operator(OP_AND)),
             Some('|') => tokens.push(Token::Operator(OP_OR)),
-            Some(c) => match tokenize_filter(&mut s) {
-                Ok(filter) => {
-                    tokens.push(Token::Filter(filter));
-                    already = true;
-                }
-                Err(e) => bail!(MyError::Syntax(e.to_string())),
-            },
+            Some(c) => tokenize_filter(&mut s).map(|filter| {
+                tokens.push(Token::Filter(filter));
+                already = true;
+            })?,
+            // Some(c) => match tokenize_filter(&mut s) {
+            //     Ok(filter) => {
+            //         tokens.push(Token::Filter(filter));
+            //         already = true;
+            //     }
+            //     Err(e) => bail!(MyError::Syntax(e.to_string())),
+            // },
             None => break,
         }
         if !already {
@@ -139,7 +143,7 @@ fn tokenize(s: &str) -> Result<Vec<Token>> {
     Ok(tokens)
 }
 
-fn into_rpn(infix: Vec<Token>) -> Result<Vec<Token>> {
+pub fn into_rpn(infix: Vec<Token>) -> Result<Vec<Token>> {
     let mut op_stack = Vec::new();
     let mut rpn = Vec::new();
     for token in infix.into_iter() {
@@ -180,27 +184,14 @@ fn into_rpn(infix: Vec<Token>) -> Result<Vec<Token>> {
     Ok(rpn)
 }
 
-impl TryFrom<&str> for FilterExpr {
-    type Error = anyhow::Error;
-
-    fn try_from(s: &str) -> Result<Self> {
-        let infix = tokenize(s)?;
-        let rpn = into_rpn(infix)?;
-        let mut filter_expr_symbols = Vec::new();
-        for token in rpn.into_iter() {
-            let symbol = match token {
-                Token::Operator(op) => match op {
-                    OP_AND => FilterExprSymbol::Operator(FilterExprOperator::OpAnd),
-                    OP_OR => FilterExprSymbol::Operator(FilterExprOperator::OpOr),
-                    _ => unreachable!(),
-                },
-                Token::Filter(args) => FilterExprSymbol::try_from(args)?,
-                // there are no parentheses in rpn
-                _ => unreachable!(),
-            };
-            filter_expr_symbols.push(symbol);
-        }
-
-        FilterExpr::try_from(filter_expr_symbols)
+pub fn token_to_symbol(token: Token) -> Result<FilterExprSymbol> {
+    match token {
+        Token::Operator(op) => match op {
+            OP_AND => Ok(FilterExprSymbol::Operator(FilterExprOperator::OpAnd)),
+            OP_OR => Ok(FilterExprSymbol::Operator(FilterExprOperator::OpOr)),
+            _ => bail!(MyError::Syntax("Invalid operator".into())),
+        },
+        Token::Filter(args) => Ok(FilterExprSymbol::try_from(args)?),
+        _ => bail!(MyError::Syntax("Invalid operator".into())),
     }
 }

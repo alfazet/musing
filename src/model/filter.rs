@@ -1,9 +1,11 @@
 use anyhow::{Result, anyhow, bail};
 use regex::Regex;
+use std::fmt::{self, Display, Formatter};
 
 use crate::{
     error::MyError,
     model::{song::*, tag_key::TagKey},
+    parsers::filter as parser,
 };
 
 pub type FilterArgs = (String, String, String);
@@ -26,7 +28,7 @@ pub enum FilterExprOperator {
 }
 
 pub enum FilterExprSymbol {
-    Filter(Box<dyn Filter>),
+    Filter(Box<dyn Filter + Send>),
     Operator(FilterExprOperator),
 }
 
@@ -47,13 +49,12 @@ impl Filter for RegexFilter {
 }
 
 impl RegexFilter {
-    pub fn new(tag: TagKey, regex: String, inverted: bool) -> Result<Self> {
-        let regex = Regex::new(&regex).map_err(|e| MyError::Syntax(e.to_string()))?;
-        Ok(Self {
+    pub fn new(tag: TagKey, regex: Regex, inverted: bool) -> Self {
+        Self {
             tag,
             regex,
             inverted,
-        })
+        }
     }
 }
 
@@ -62,9 +63,10 @@ impl TryFrom<FilterArgs> for FilterExprSymbol {
 
     fn try_from((tag, comparator, pattern): FilterArgs) -> Result<Self> {
         let tag_key = tag.as_str().try_into()?;
+        let regex = Regex::new(&pattern)?;
         let boxed_filter = match comparator.as_str() {
-            "==" => Box::new(RegexFilter::new(tag_key, pattern, false)?),
-            "!=" => Box::new(RegexFilter::new(tag_key, pattern, true)?),
+            "==" => Box::new(RegexFilter::new(tag_key, regex, false)),
+            "!=" => Box::new(RegexFilter::new(tag_key, regex, true)),
             _ => bail!(MyError::Syntax("Invalid comparator".into())),
         };
 
@@ -95,6 +97,22 @@ impl TryFrom<Vec<FilterExprSymbol>> for FilterExpr {
         } else {
             bail!(MyError::Syntax("Invalid filter expression".into()));
         }
+    }
+}
+
+impl TryFrom<&str> for FilterExpr {
+    type Error = anyhow::Error;
+
+    fn try_from(s: &str) -> Result<Self> {
+        let infix = parser::tokenize(s)?;
+        let rpn = parser::into_rpn(infix)?;
+        // TODO: rewrite this to be more functional?
+        let mut filter_expr_symbols = Vec::new();
+        for token in rpn.into_iter() {
+            filter_expr_symbols.push(parser::token_to_symbol(token)?);
+        }
+
+        FilterExpr::try_from(filter_expr_symbols)
     }
 }
 

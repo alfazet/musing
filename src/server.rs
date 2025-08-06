@@ -7,7 +7,10 @@ use tokio::{
     sync::{broadcast, mpsc},
 };
 
-use crate::config::{Config, ServerConfig};
+use crate::{
+    config::{Config, ServerConfig},
+    model::request::*,
+};
 
 type SenderToPlayer = mpsc::UnboundedSender<()>;
 type ShutdownSender = broadcast::Sender<()>;
@@ -44,7 +47,7 @@ impl ClientHandler {
                 _ = self.rx_shutdown.recv() => break,
             };
             let Ok(len) = res else {
-                self.stream.shutdown();
+                let _ = self.stream.shutdown();
                 break;
             };
 
@@ -55,10 +58,27 @@ impl ClientHandler {
                 _ = self.rx_shutdown.recv() => break,
             };
             if let Err(e) = res {
-                self.stream.shutdown();
+                let _ = self.stream.shutdown();
                 break;
             }
             let s = String::from_utf8(buf)?;
+            /*
+            let request_kind = match RequestKind::try_from(s.as_str()) {
+                Ok(kind) => {
+                    use RequestKind as Kind;
+                    match kind {
+                        Kind::Select(args) => {
+                            let SelectArgs(filter_expr, sort_by) = args;
+                            println!("select {:?}", sort_by);
+                        }
+                        _ => todo!(),
+                    }
+                }
+                Err(e) => {
+                    let _ = self.stream.write_all(e.to_string().as_bytes()).await;
+                }
+            };
+            */
 
             // parse the message into a Request
             // send the Request bundled with the oneshot channel the the player

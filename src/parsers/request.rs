@@ -18,13 +18,6 @@ enum State {
     SquareBracketBackslash,
 }
 
-/// Rules:
-///     - splits the string on whitespace ...
-///     - ... except strings in quotes or square brackets, which are treated as one contiguous string
-///     - inside strings in quotes the characters " (double quote) and \ (slash) need to be escaped
-///     as \" and \\ respectively
-///     - inside strings in square brackets the characters ] (closing bracket) and \ (slash) need to be escaped
-///     as \] and \\ respectively
 pub fn tokenize(s: &str) -> Result<Vec<String>> {
     let mut tokens = Vec::new();
     let mut s = s.chars();

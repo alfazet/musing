@@ -1,14 +1,29 @@
 use anyhow::{Result, anyhow, bail};
-use std::{cmp::Ordering, str::FromStr};
+use std::{
+    cmp::Ordering,
+    fmt::{self, Display, Formatter},
+};
 
 use crate::model::{
     song::*,
     tag_key::{TagKey, TagKeyKind},
 };
 
+#[derive(Debug)]
 pub struct Comparator {
     tag_key: TagKey,
     inverted: bool,
+}
+
+impl Display for Comparator {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let operator = if self.inverted {
+            "!".to_string()
+        } else {
+            "".to_string()
+        };
+        write!(f, "{}{}", operator, self.tag_key)
+    }
 }
 
 impl TryFrom<&str> for Comparator {
