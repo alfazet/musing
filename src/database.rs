@@ -1,4 +1,6 @@
 use anyhow::Result;
+use rayon::prelude::*;
+use rayon::prelude::*;
 use serde_json::{Map, Value as JsonValue};
 use std::{
     cmp::Ordering,
@@ -34,29 +36,31 @@ pub struct Database {
 }
 
 impl Database {
-    fn to_data_rows(files: &[PathBuf], id_offset: u32) -> impl Iterator<Item = DataRow> {
-        files.iter().enumerate().filter_map(move |(id, file)| {
-            match Song::try_from(file.as_path()) {
+    fn to_data_rows(files: &[PathBuf], id_offset: u32) -> Vec<DataRow> {
+        files
+            .par_iter()
+            .enumerate()
+            .filter_map(move |(id, file)| match Song::try_from(file.as_path()) {
                 Ok(song) => Some(DataRow {
                     id: id as u32 + id_offset + 1,
                     song,
                     to_delete: false,
                 }),
                 Err(e) => {
-                    log::error!("{}", e);
+                    log::warn!("{}", e);
                     None
                 }
-            }
-        })
+            })
+            .collect()
     }
 
-    pub fn new(music_dir: &Path, allowed_exts: Vec<String>) -> Self {
-        let files = utils::walk_dir(music_dir, SystemTime::UNIX_EPOCH, &allowed_exts);
-        let data_rows = Self::to_data_rows(&files, 0).collect();
+    pub fn new(music_dir: PathBuf, allowed_exts: Vec<String>) -> Self {
+        let files = utils::walk_dir(&music_dir, SystemTime::UNIX_EPOCH, &allowed_exts);
+        let data_rows = Self::to_data_rows(&files, 0);
         let last_update = SystemTime::now();
 
         Self {
-            music_dir: music_dir.to_path_buf(),
+            music_dir,
             allowed_exts,
             data_rows,
             last_update,
@@ -64,7 +68,7 @@ impl Database {
     }
 
     pub fn update(&mut self) -> Response {
-        for row in self.data_rows.iter_mut() {
+        self.data_rows.par_iter_mut().for_each(|row| {
             if let Ok(mod_time) = row
                 .song
                 .path
@@ -79,14 +83,13 @@ impl Database {
             } else {
                 row.to_delete = true;
             }
-        }
+        });
         self.data_rows.retain(|row| !row.to_delete);
         let new_files = utils::walk_dir(&self.music_dir, self.last_update, &self.allowed_exts);
         let mut new_data_rows = Self::to_data_rows(
             &new_files,
             self.data_rows.last().map(|row| row.id).unwrap_or(0),
-        )
-        .collect();
+        );
         self.data_rows.append(&mut new_data_rows);
         self.last_update = SystemTime::now();
 
@@ -105,12 +108,12 @@ impl Database {
 
         let mut filtered: Vec<_> = self
             .data_rows
-            .iter()
+            .par_iter()
             .filter(|row| filter_expr.evaluate(&row.song))
             .collect();
-        filtered.sort_by(|lhs, rhs| compare(&lhs.song.song_meta, &rhs.song.song_meta));
+        filtered.par_sort_by(|lhs, rhs| compare(&lhs.song.song_meta, &rhs.song.song_meta));
 
-        filtered.into_iter().map(|row| row.id).collect()
+        filtered.into_par_iter().map(|row| row.id).collect()
     }
 
     /// ("inner" because this returns a Vec "inside" = to other rustmpd functions)
@@ -127,7 +130,7 @@ impl Database {
     /// Get values of `tags` for songs with `ids`.
     pub fn metadata(&self, MetadataArgs(ids, tags): MetadataArgs) -> Response {
         let values: Vec<_> = ids
-            .into_iter()
+            .into_par_iter()
             .map(|id| {
                 if let Ok(i) = self.data_rows.binary_search_by_key(&id, |row| row.id) {
                     let data = tags.iter().cloned().map(|tag| {

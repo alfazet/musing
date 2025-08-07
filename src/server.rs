@@ -109,10 +109,11 @@ pub async fn run(config: Config) -> Result<()> {
     let (tx, rx) = mpsc::unbounded_channel();
     let (tx_shutdown, rx_shutdown) = broadcast::channel(1);
     let server = Server::new(server_config);
-
-    tokio::select! {
-        _ = signal::ctrl_c() => Ok(()),
-        res = server.run(tx, tx_shutdown) => res,
-        res = tokio::spawn(async move { player::run(player_config, rx).await }) => res?,
+    let player_task = tokio::spawn(async move { player::run(player_config, rx).await });
+    let res = server.run(tx, tx_shutdown).await;
+    if let Err(e) = player_task.await? {
+        log::error!("{}", e);
     }
+
+    res
 }

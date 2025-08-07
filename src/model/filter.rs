@@ -20,7 +20,6 @@ struct RegexFilter {
     inverted: bool,
 }
 
-#[derive(Default)]
 struct NullFilter; // matches everything
 
 // TODO: FuzzyFilter based on edit distance
@@ -31,7 +30,7 @@ pub enum FilterExprOperator {
 }
 
 pub enum FilterExprSymbol {
-    Filter(Box<dyn Filter + Send>),
+    Filter(Box<dyn Filter + Send + Sync>),
     Operator(FilterExprOperator),
 }
 
@@ -86,7 +85,7 @@ impl TryFrom<FilterArgs> for FilterExprSymbol {
 impl Default for FilterExpr {
     fn default() -> Self {
         Self {
-            symbols: vec![FilterExprSymbol::Filter(Box::new(NullFilter::default()))],
+            symbols: vec![FilterExprSymbol::Filter(Box::new(NullFilter))],
         }
     }
 }

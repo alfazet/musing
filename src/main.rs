@@ -39,7 +39,12 @@ async fn main() {
             return;
         }
     };
-    if let Err(e) = server::run(config).await {
+
+    let res = tokio::select! {
+        _ = tokio::signal::ctrl_c() => Ok(()),
+        res = server::run(config) => res,
+    };
+    if let Err(e) = res {
         log::error!("{}", e);
     }
 }

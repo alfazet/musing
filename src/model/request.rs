@@ -17,11 +17,15 @@ pub struct PlayArgs(pub u32); // queue id
 pub struct VolumeChangeArgs(pub i32); // in range 0..=100
 pub struct SeekArgs(pub i32); // in seconds
 
-pub enum RequestKind {
+pub enum DbRequestKind {
     Update,
     Select(SelectArgs),
     Metadata(MetadataArgs),
     Unique(UniqueArgs),
+}
+
+pub enum RequestKind {
+    DbRequestKind(DbRequestKind),
 
     Pause,
     Resume,
@@ -89,7 +93,7 @@ impl TryFrom<&[String]> for UniqueArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &[String]) -> Result<Self> {
-        if args.len() < 1 {
+        if args.is_empty() {
             bail!(MyError::Syntax("Invalid arguments to `unique`".into()));
         }
         let tag = TagKey::try_from(args[0].as_str())?;
@@ -118,6 +122,7 @@ impl TryFrom<&str> for RequestKind {
     type Error = anyhow::Error;
 
     fn try_from(s: &str) -> Result<Self> {
+        use DbRequestKind as DbKind;
         use RequestKind as Kind;
 
         let tokens = request::tokenize(s)?;
@@ -126,10 +131,10 @@ impl TryFrom<&str> for RequestKind {
             .map(|s| s.as_str())
             .ok_or(MyError::Syntax("Empty request".into()))?
         {
-            "update" => Kind::Update,
-            "select" => Kind::Select(tokens[1..].try_into()?),
-            "metadata" => Kind::Metadata(tokens[1..].try_into()?),
-            "unique" => Kind::Unique(tokens[1..].try_into()?),
+            "update" => Kind::DbRequestKind(DbKind::Update),
+            "select" => Kind::DbRequestKind(DbKind::Select(tokens[1..].try_into()?)),
+            "metadata" => Kind::DbRequestKind(DbKind::Metadata(tokens[1..].try_into()?)),
+            "unique" => Kind::DbRequestKind(DbKind::Unique(tokens[1..].try_into()?)),
             _ => bail!(MyError::Syntax("Invalid request".into())),
         };
 
