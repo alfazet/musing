@@ -10,7 +10,12 @@ use std::{
 
 use crate::{
     model::{
-        comparator::Comparator, filter::FilterExpr, response::Response, song::*, tag_key::TagKey,
+        comparator::Comparator,
+        filter::FilterExpr,
+        request::{MetadataArgs, SelectArgs, UniqueArgs},
+        response::Response,
+        song::*,
+        tag_key::TagKey,
     },
     utils,
 };
@@ -58,7 +63,7 @@ impl Database {
         }
     }
 
-    pub fn update(&mut self) {
+    pub fn update(&mut self) -> Response {
         for row in self.data_rows.iter_mut() {
             if let Ok(mod_time) = row
                 .song
@@ -84,6 +89,8 @@ impl Database {
         .collect();
         self.data_rows.append(&mut new_data_rows);
         self.last_update = SystemTime::now();
+
+        Response::new_ok().with_item("new_files".into(), &new_files.len())
     }
 
     /// Get ids of songs matching `filter_expr`, sorted by the comparators in `sort_by`.
@@ -107,18 +114,18 @@ impl Database {
     }
 
     /// ("inner" because this returns a Vec "inside" = to other rustmpd functions)
-    pub fn select_inner(&self, (filter_expr, sort_by): (FilterExpr, Vec<Comparator>)) -> Vec<u32> {
+    pub fn select_inner(&self, SelectArgs(filter_expr, sort_by): SelectArgs) -> Vec<u32> {
         self.select(filter_expr, sort_by)
     }
 
     /// ("outer" because this returns JSON "outside" = to the client)
-    pub fn select_outer(&self, (filter_expr, sort_by): (FilterExpr, Vec<Comparator>)) -> Response {
+    pub fn select_outer(&self, SelectArgs(filter_expr, sort_by): SelectArgs) -> Response {
         let ids = self.select(filter_expr, sort_by);
         Response::new_ok().with_item("ids".into(), &ids)
     }
 
     /// Get values of `tags` for songs with `ids`.
-    pub fn metadata(&self, (ids, tags): (Vec<u32>, Vec<TagKey>)) -> Response {
+    pub fn metadata(&self, MetadataArgs(ids, tags): MetadataArgs) -> Response {
         let values: Vec<_> = ids
             .into_iter()
             .map(|id| {
@@ -139,10 +146,7 @@ impl Database {
     }
 
     /// Get unique values of `tag` among songs matching `filter_expr`, grouped by tags in `group_by`.
-    pub fn unique(
-        &self,
-        (tag, filter_expr, group_by): (TagKey, FilterExpr, Vec<TagKey>),
-    ) -> Response {
+    pub fn unique(&self, UniqueArgs(tag, group_by, filter_expr): UniqueArgs) -> Response {
         let mut groups = HashMap::new();
         let filtered = self
             .data_rows

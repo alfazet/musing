@@ -13,15 +13,35 @@ impl From<(u32, u32)> for Entry {
     }
 }
 
+struct Random {
+    rng: SmallRng,
+    ids: Vec<u32>,
+}
+
 #[derive(Default)]
 pub struct Queue {
-    // TODO: yea so this isn't Send...
-    rng: ThreadRng,
     list: Vec<Entry>,
-    randomized: Option<Vec<u32>>,
     pos: Option<usize>,
     history: HashSet<u32>,
     next_id: u32,
+    random: Option<Random>,
+}
+
+impl Default for Random {
+    fn default() -> Self {
+        Self {
+            rng: SmallRng::from_os_rng(),
+            ids: Vec::new(),
+        }
+    }
+}
+
+impl Random {
+    pub fn new(mut ids: Vec<u32>) -> Self {
+        let mut rng = SmallRng::from_os_rng();
+        ids.shuffle(&mut rng);
+        Self { rng, ids }
+    }
 }
 
 impl Queue {
@@ -48,10 +68,10 @@ impl Queue {
     }
 
     pub fn move_next(&mut self) {
-        match &mut self.randomized {
-            Some(randomized) => {
+        match &mut self.random {
+            Some(random) => {
                 // move to the next random position or None if none are left
-                self.pos = randomized.pop().and_then(|id| self.find_by_id(id))
+                self.pos = random.ids.pop().and_then(|id| self.find_by_id(id))
             }
             None => match &mut self.pos {
                 Some(pos) if *pos < self.list.len() - 1 => *pos += 1,
@@ -71,8 +91,8 @@ impl Queue {
 
     pub fn move_to(&mut self, id: u32) -> bool {
         // to prevent repetitions
-        if let Some(randomized) = &mut self.randomized {
-            randomized.retain(|random_id| *random_id != id);
+        if let Some(random) = &mut self.random {
+            random.ids.retain(|random_id| *random_id != id);
         }
         match self.find_by_id(id) {
             Some(pos) => {
@@ -94,19 +114,19 @@ impl Queue {
             Some(pos) => self.list.insert(pos, entry),
             None => self.list.push(entry),
         }
-        if let Some(randomized) = &mut self.randomized {
+        if let Some(random) = &mut self.random {
             // insert into a random spot in O(1)
-            let random_pos = self.rng.random_range(0..randomized.len());
-            let temp = mem::replace(&mut randomized[random_pos], entry.queue_id);
-            randomized.push(temp);
+            let random_pos = random.rng.random_range(0..random.ids.len());
+            let temp = mem::replace(&mut random.ids[random_pos], entry.queue_id);
+            random.ids.push(temp);
         }
     }
 
     /// Returns Some(true) if the removed song was currently playing
     /// Some(false) if not, and None if the song wasn't found.
     pub fn remove(&mut self, id: u32) -> Option<bool> {
-        if let Some(randomized) = &mut self.randomized {
-            randomized.retain(|random_id| *random_id != id);
+        if let Some(random) = &mut self.random {
+            random.ids.retain(|random_id| *random_id != id);
         }
         if let Some(removed_pos) = self.find_by_id(id) {
             self.list.remove(removed_pos);
@@ -131,14 +151,14 @@ impl Queue {
     pub fn clear(&mut self) {
         self.list.clear();
         self.history.clear();
-        let _ = self.randomized.take();
+        let _ = self.random.take();
     }
 
     pub fn toggle_random(&mut self) {
-        if let Some(randomized) = &self.randomized {
-            let _ = self.randomized.take();
+        if let Some(random) = &self.random {
+            let _ = self.random.take();
         } else {
-            let mut not_played_yet: Vec<_> = self
+            let not_played_ids: Vec<_> = self
                 .list
                 .clone()
                 .into_iter()
@@ -151,8 +171,7 @@ impl Queue {
                 })
                 .map(|entry| entry.queue_id)
                 .collect();
-            not_played_yet.shuffle(&mut self.rng);
-            self.randomized = Some(not_played_yet);
+            self.random = Some(Random::new(not_played_ids));
         }
     }
 }

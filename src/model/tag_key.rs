@@ -9,7 +9,7 @@ use symphonia::core::meta::StandardTagKey;
 
 use crate::{error::MyError, utils};
 
-static TAG_NAMES: [&'static str; 30] = [
+static TAG_NAMES: [&str; 30] = [
     "album",
     "albumartist",
     "arranger",

@@ -156,6 +156,12 @@ impl AudioBackend {
         }
     }
 
+    pub fn with_default(mut self, default_device_name: &str) -> Result<Self> {
+        self.add_device(default_device_name)?;
+
+        Ok(self)
+    }
+
     pub fn add_device(&mut self, device_name: &str) -> Result<()> {
         let cpal_device = audio_utils::get_device_by_name(device_name)?;
         let audio_device = AudioDevice::try_from(cpal_device)?;
@@ -188,23 +194,11 @@ mod audio_utils {
 
     pub fn get_device_by_name(device_name: &str) -> Result<CpalDevice> {
         let host = cpal::default_host();
-        let device = match host
-            .output_devices()?
+        host.output_devices()?
             .find(|x| x.name().map(|s| s == device_name).unwrap_or(false))
-        {
-            Some(device) => device,
-            None => {
-                log::warn!(
-                    "Device `{}` not available, falling back to `default`",
-                    device_name
-                );
-                match host.default_output_device() {
-                    Some(device) => device,
-                    None => bail!(MyError::Audio("Unable to find default audio device".into())),
-                }
-            }
-        };
-
-        Ok(device)
+            .ok_or(anyhow!(MyError::Audio(format!(
+                "Audio device `{}` unavailable",
+                device_name
+            ))))
     }
 }

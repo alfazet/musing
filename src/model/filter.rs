@@ -20,6 +20,9 @@ struct RegexFilter {
     inverted: bool,
 }
 
+#[derive(Default)]
+struct NullFilter; // matches everything
+
 // TODO: FuzzyFilter based on edit distance
 
 pub enum FilterExprOperator {
@@ -58,6 +61,12 @@ impl RegexFilter {
     }
 }
 
+impl Filter for NullFilter {
+    fn matches(&self, _: &Song) -> bool {
+        true
+    }
+}
+
 impl TryFrom<FilterArgs> for FilterExprSymbol {
     type Error = anyhow::Error;
 
@@ -71,6 +80,14 @@ impl TryFrom<FilterArgs> for FilterExprSymbol {
         };
 
         Ok(Self::Filter(boxed_filter))
+    }
+}
+
+impl Default for FilterExpr {
+    fn default() -> Self {
+        Self {
+            symbols: vec![FilterExprSymbol::Filter(Box::new(NullFilter::default()))],
+        }
     }
 }
 
@@ -106,11 +123,10 @@ impl TryFrom<&str> for FilterExpr {
     fn try_from(s: &str) -> Result<Self> {
         let infix = parser::tokenize(s)?;
         let rpn = parser::into_rpn(infix)?;
-        // TODO: rewrite this to be more functional?
-        let mut filter_expr_symbols = Vec::new();
-        for token in rpn.into_iter() {
-            filter_expr_symbols.push(parser::token_to_symbol(token)?);
-        }
+        let filter_expr_symbols = rpn
+            .into_iter()
+            .map(parser::token_to_symbol)
+            .collect::<Result<Vec<FilterExprSymbol>>>()?;
 
         FilterExpr::try_from(filter_expr_symbols)
     }

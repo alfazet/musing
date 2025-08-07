@@ -37,6 +37,15 @@ impl From<ResponseItem> for (String, JsonValue) {
     }
 }
 
+impl<T> From<Result<T>> for Response {
+    fn from(result: Result<T>) -> Self {
+        match result {
+            Ok(_) => Self::new_ok(),
+            Err(e) => Self::new_err(e.to_string()),
+        }
+    }
+}
+
 impl Response {
     pub fn new_ok() -> Self {
         Self {
@@ -58,7 +67,6 @@ impl Response {
         }
     }
 
-    // TODO: log if serialization failed
     pub fn with_item(mut self, key: String, value: &dyn ErasedSerialize) -> Self {
         let value = match serde_json::to_value(value) {
             Ok(value) => value,

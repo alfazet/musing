@@ -47,7 +47,7 @@ impl ClientHandler {
                 _ = self.rx_shutdown.recv() => break,
             };
             let Ok(len) = res else {
-                let _ = self.stream.shutdown();
+                let _ = self.stream.shutdown().await;
                 break;
             };
 
@@ -58,7 +58,7 @@ impl ClientHandler {
                 _ = self.rx_shutdown.recv() => break,
             };
             if let Err(e) = res {
-                let _ = self.stream.shutdown();
+                let _ = self.stream.shutdown().await;
                 break;
             }
             let s = String::from_utf8(buf)?;
@@ -70,7 +70,7 @@ impl ClientHandler {
                 }
                 Err(e) => Response::new_err(e.to_string()).into_json_string()?,
             };
-            let _ = self.stream.write_all(response.as_bytes()).await?;
+            self.stream.write_all(response.as_bytes()).await?;
         }
 
         Ok(())
@@ -101,7 +101,7 @@ impl Server {
     }
 }
 
-pub async fn run(config: Config) {
+pub async fn run(config: Config) -> Result<()> {
     let Config {
         server_config,
         player_config,
@@ -109,18 +109,10 @@ pub async fn run(config: Config) {
     let (tx, rx) = mpsc::unbounded_channel();
     let (tx_shutdown, rx_shutdown) = broadcast::channel(1);
     let server = Server::new(server_config);
-    let player_task = tokio::spawn(async move { player::run(player_config, rx).await });
 
-    let res = tokio::select! {
-        res = server.run(tx, tx_shutdown) => res,
-        res = player_task => res.map_err(|e| anyhow!(e)),
+    tokio::select! {
         _ = signal::ctrl_c() => Ok(()),
-    };
-    if let Err(e) = res {
-        log::error!("{}", e);
+        res = server.run(tx, tx_shutdown) => res,
+        res = tokio::spawn(async move { player::run(player_config, rx).await }) => res?,
     }
-
-    // at this point tx_shutdown was dropped => all client handlers ended => ...
-    // ... all clones of tx got dropped => the player task ended
-    // or the player task could've been the one to end first (due to a panic)
 }

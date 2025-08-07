@@ -11,7 +11,7 @@ type RespondTo = oneshot::Sender<Response>;
 
 pub struct SelectArgs(pub FilterExpr, pub Vec<Comparator>);
 pub struct MetadataArgs(pub Vec<u32>, pub Vec<TagKey>);
-pub struct UniqueArgs(pub TagKey, pub FilterExpr, pub Vec<TagKey>);
+pub struct UniqueArgs(pub TagKey, pub Vec<TagKey>, pub FilterExpr);
 pub struct AddArgs(pub Vec<u32>); // db ids
 pub struct PlayArgs(pub u32); // queue id
 pub struct VolumeChangeArgs(pub i32); // in range 0..=100
@@ -45,21 +45,72 @@ impl TryFrom<&[String]> for SelectArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &[String]) -> Result<Self> {
-        let Some(arg1) = args.get(0).map(|s| s.as_str()) else {
-            bail!(MyError::Syntax("Invalid arguments to `select`".into()));
-        };
-        let filter_expr = FilterExpr::try_from(arg1)?;
+        let filter_expr = args.first().map_or_else(
+            || Ok(FilterExpr::default()),
+            |s| FilterExpr::try_from(s.as_str()),
+        )?;
         let sort_by = args
             .get(1)
             .map(|v| {
                 v.trim_end_matches(',')
                     .split(',')
-                    .map(|s| Comparator::try_from(s))
+                    .map(Comparator::try_from)
                     .collect::<Result<Vec<Comparator>>>()
             })
             .unwrap_or(Ok(Vec::new()))?;
 
         Ok(Self(filter_expr, sort_by))
+    }
+}
+
+impl TryFrom<&[String]> for MetadataArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &[String]) -> Result<Self> {
+        if args.len() != 2 {
+            bail!(MyError::Syntax("Invalid arguments to `metadata`".into()));
+        }
+        let ids = args[0]
+            .trim_end_matches(',')
+            .split(',')
+            .map(|s| s.parse::<u32>().map_err(|e| e.into()))
+            .collect::<Result<Vec<u32>>>()?;
+        let tags = args[1]
+            .trim_end_matches(',')
+            .split(',')
+            .map(TagKey::try_from)
+            .collect::<Result<Vec<TagKey>>>()?;
+
+        Ok(Self(ids, tags))
+    }
+}
+
+impl TryFrom<&[String]> for UniqueArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &[String]) -> Result<Self> {
+        if args.len() < 1 {
+            bail!(MyError::Syntax("Invalid arguments to `unique`".into()));
+        }
+        let tag = TagKey::try_from(args[0].as_str())?;
+        let group_by = match args.get(1).map(|s| s.as_str()) {
+            Some("groupby") => args
+                .get(2)
+                .ok_or(MyError::Syntax("No tags provided to `groupby`".into()))?
+                .trim_end_matches(',')
+                .split(',')
+                .map(TagKey::try_from)
+                .collect::<Result<Vec<TagKey>>>()?,
+            _ => Vec::new(),
+        };
+        let filter_expr = args
+            .get(1 + if group_by.is_empty() { 0 } else { 2 })
+            .map_or_else(
+                || Ok(FilterExpr::default()),
+                |s| FilterExpr::try_from(s.as_str()),
+            )?;
+
+        Ok(Self(tag, group_by, filter_expr))
     }
 }
 
@@ -71,12 +122,15 @@ impl TryFrom<&str> for RequestKind {
 
         let tokens = request::tokenize(s)?;
         let kind = match tokens
-            .get(0)
+            .first()
             .map(|s| s.as_str())
             .ok_or(MyError::Syntax("Empty request".into()))?
         {
+            "update" => Kind::Update,
             "select" => Kind::Select(tokens[1..].try_into()?),
-            _ => todo!(),
+            "metadata" => Kind::Metadata(tokens[1..].try_into()?),
+            "unique" => Kind::Unique(tokens[1..].try_into()?),
+            _ => bail!(MyError::Syntax("Invalid request".into())),
         };
 
         Ok(kind)

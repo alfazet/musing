@@ -4,7 +4,7 @@ use std::mem;
 use crate::error::MyError;
 
 // based on https://github.com/tmiasko/shell-words/
-// modified to include square brackets as a delimiter for filters
+// modified to include square brackets as a "verbatim" delimiter
 #[derive(Debug)]
 enum State {
     Whitespace,
