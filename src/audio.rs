@@ -18,11 +18,13 @@ use symphonia::core::{
     units::TimeBase,
 };
 use tokio::{
-    sync::mpsc::{self, Sender, UnboundedReceiver, UnboundedSender},
+    sync::{mpsc, oneshot},
     task::{self, JoinHandle},
 };
 
 use crate::{error::MyError, model::song::*};
+
+type SeekReceiver = mpsc::UnboundedReceiver<i32>;
 
 #[derive(Debug)]
 enum PlaybackState {
@@ -40,7 +42,6 @@ struct AudioState {
     playback: Playback,
     volume: Arc<RwLock<f32>>,
     elapsed: Arc<RwLock<u64>>,
-    seek: Arc<Mutex<i32>>,
 }
 
 struct AudioDevice {
@@ -126,7 +127,6 @@ impl Default for AudioState {
             playback: Playback::default(),
             volume: Arc::new(RwLock::new(1.0)),
             elapsed: Arc::new(RwLock::new(0)),
-            seek: Arc::new(Mutex::new(0)),
         }
     }
 }
@@ -158,6 +158,7 @@ impl AudioBackend {
 
     pub fn with_default(mut self, default_device_name: &str) -> Result<Self> {
         self.add_device(default_device_name)?;
+        self.enable_device(default_device_name);
 
         Ok(self)
     }
@@ -186,6 +187,28 @@ impl AudioBackend {
         if let Some(device) = self.devices.get_mut(device_name) {
             device.enabled ^= true;
         }
+    }
+
+    pub async fn start_playback(
+        &mut self,
+        song: &Song,
+        rx_seek: SeekReceiver,
+        tx_over: oneshot::Sender<()>,
+    ) -> Result<()> {
+        // volume and elapsed are Arc<RwLocks> kept in AudioState
+        // let (tx_samples, rx_samples) = mpsc::bounded(1);
+        // make a blocking task to produce samples
+        // tokio::spawn the task that will tokio::select one of two receivers
+        // - samples receiver (on recv adds them to the RwLocked vector)
+        //      if the song ends notify the Player by tx_over
+        // - rx_seek (its tx half will be kept in the Player as an Option)
+        // (we should be able to cancel this task in case we start a new playback)
+
+        // create the stream (with _raw, don't use that weird macro anymore)
+        // the cpal callback should *only* consist of waiting until the length of the samples Vec
+        // is >= target sample, if yes write samples to output, if time runs out write silence
+
+        Ok(())
     }
 }
 

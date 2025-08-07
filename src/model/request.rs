@@ -12,7 +12,7 @@ type RespondTo = oneshot::Sender<Response>;
 pub struct SelectArgs(pub FilterExpr, pub Vec<Comparator>);
 pub struct MetadataArgs(pub Vec<u32>, pub Vec<TagKey>);
 pub struct UniqueArgs(pub TagKey, pub Vec<TagKey>, pub FilterExpr);
-pub struct AddArgs(pub Vec<u32>); // db ids
+pub struct AddArgs(pub Vec<u32>, pub Option<usize>); // db ids
 pub struct PlayArgs(pub u32); // queue id
 pub struct VolumeChangeArgs(pub i32); // in range 0..=100
 pub struct SeekArgs(pub i32); // in seconds
@@ -25,7 +25,7 @@ pub enum DbRequestKind {
 }
 
 pub enum RequestKind {
-    DbRequestKind(DbRequestKind),
+    Db(DbRequestKind),
 
     Pause,
     Resume,
@@ -118,6 +118,24 @@ impl TryFrom<&[String]> for UniqueArgs {
     }
 }
 
+impl TryFrom<&[String]> for AddArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &[String]) -> Result<Self> {
+        if args.is_empty() {
+            bail!(MyError::Syntax("Invalid arguments to `add`".into()));
+        }
+        let ids = args[0]
+            .trim_end_matches(',')
+            .split(',')
+            .map(|s| s.parse::<u32>().map_err(|e| e.into()))
+            .collect::<Result<Vec<u32>>>()?;
+        let pos = args.get(1).and_then(|x| x.parse::<usize>().ok());
+
+        Ok(Self(ids, pos))
+    }
+}
+
 impl TryFrom<&str> for RequestKind {
     type Error = anyhow::Error;
 
@@ -131,10 +149,11 @@ impl TryFrom<&str> for RequestKind {
             .map(|s| s.as_str())
             .ok_or(MyError::Syntax("Empty request".into()))?
         {
-            "update" => Kind::DbRequestKind(DbKind::Update),
-            "select" => Kind::DbRequestKind(DbKind::Select(tokens[1..].try_into()?)),
-            "metadata" => Kind::DbRequestKind(DbKind::Metadata(tokens[1..].try_into()?)),
-            "unique" => Kind::DbRequestKind(DbKind::Unique(tokens[1..].try_into()?)),
+            "update" => Kind::Db(DbKind::Update),
+            "select" => Kind::Db(DbKind::Select(tokens[1..].try_into()?)),
+            "metadata" => Kind::Db(DbKind::Metadata(tokens[1..].try_into()?)),
+            "unique" => Kind::Db(DbKind::Unique(tokens[1..].try_into()?)),
+            "add" => Kind::Add(tokens[1..].try_into()?),
             _ => bail!(MyError::Syntax("Invalid request".into())),
         };
 

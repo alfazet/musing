@@ -23,6 +23,8 @@ struct Player {
 }
 
 impl Player {
+    // database requests are blocking and (relatively) CPU-intensive,
+    // so we send them to rayon's thread pool
     async fn db_request(&mut self, kind: DbRequestKind) -> Result<Response> {
         let (tx, rx) = oneshot::channel();
         rayon::scope(|s| {
@@ -46,7 +48,45 @@ impl Player {
         use RequestKind as Kind;
 
         match kind {
-            Kind::DbRequestKind(db_request_kind) => self.db_request(db_request_kind).await,
+            Kind::Db(db_request_kind) => self.db_request(db_request_kind).await,
+            Kind::Add(args) => {
+                let AddArgs(db_ids, insert_pos) = args;
+                let last_id = self.database.last_id();
+                for (offset, id) in db_ids.into_iter().enumerate() {
+                    if id > last_id {
+                        return Ok(Response::new_err(format!(
+                            "Song with id `{}` not found",
+                            id
+                        )));
+                    }
+                    match insert_pos {
+                        Some(pos) => self.queue.add(id, Some(pos + offset)),
+                        None => self.queue.add(id, None),
+                    }
+                }
+
+                /*
+                for entry in self.queue.as_inner() {
+                    println!(
+                        "{:?}: {}",
+                        entry,
+                        self.database
+                            .song_by_id(entry.db_id)
+                            .unwrap()
+                            .song_meta
+                            .get(&crate::model::tag_key::TagKey::try_from("tracktitle").unwrap())
+                            .unwrap()
+                    );
+                }
+                */
+
+                Ok(Response::new_ok())
+            }
+            Kind::Play(args) => {
+                let PlayArgs(queue_id) = args;
+
+                Ok(Response::new_ok())
+            }
             _ => todo!(),
         }
     }

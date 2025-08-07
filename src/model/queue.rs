@@ -115,7 +115,7 @@ impl Queue {
             None => self.list.push(entry),
         }
         if let Some(random) = &mut self.random {
-            // insert into a random spot in O(1)
+            // insert into a random spot in constant time
             let random_pos = random.rng.random_range(0..random.ids.len());
             let temp = mem::replace(&mut random.ids[random_pos], entry.queue_id);
             random.ids.push(temp);

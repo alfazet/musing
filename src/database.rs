@@ -11,6 +11,7 @@ use std::{
 };
 
 use crate::{
+    error::MyError,
     model::{
         comparator::Comparator,
         filter::FilterExpr,
@@ -65,6 +66,17 @@ impl Database {
             data_rows,
             last_update,
         }
+    }
+
+    pub fn last_id(&self) -> u32 {
+        self.data_rows.last().map(|row| row.id).unwrap_or(0)
+    }
+
+    pub fn song_by_id(&self, id: u32) -> Result<&Song> {
+        self.data_rows
+            .binary_search_by_key(&id, |row| row.id)
+            .map(|i| &self.data_rows[i].song)
+            .map_err(|_| MyError::Database(format!("Song with id `{}` not found", id)).into())
     }
 
     pub fn update(&mut self) -> Response {
