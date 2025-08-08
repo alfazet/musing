@@ -34,10 +34,11 @@ enum PlaybackState {
     Stopped,
 }
 
-struct AudioState {
-    playback_state: PlaybackState,
-    audio_meta: Option<AudioMeta>,
-    elapsed: Arc<Mutex<u64>>,
+#[derive(Clone)]
+struct StreamData {
+    audio_meta: AudioMeta,
+    samples: Arc<(Mutex<Vec<f32>>, Condvar)>,
+    sample_i: Arc<Mutex<(usize, usize)>>,
     volume: Arc<Mutex<f32>>,
 }
 
@@ -48,41 +49,11 @@ struct AudioDevice {
     enabled: bool,
 }
 
-pub struct AudioBackend {
+pub struct Audio {
+    playback_state: PlaybackState,
+    stream_data: Option<StreamData>,
     devices: HashMap<String, AudioDevice>,
-    state: AudioState,
-}
-
-impl Default for AudioState {
-    fn default() -> Self {
-        Self {
-            playback_state: PlaybackState::default(),
-            audio_meta: None,
-            volume: Arc::new(Mutex::new(1.0)),
-            elapsed: Arc::new(Mutex::new(0)),
-        }
-    }
-}
-
-impl AudioState {
-    pub fn start(&mut self, audio_meta: AudioMeta) {
-        self.playback_state = PlaybackState::Playing;
-        self.audio_meta = Some(audio_meta);
-    }
-
-    pub fn pause(&mut self) {
-        self.playback_state = PlaybackState::Paused;
-    }
-
-    pub fn resume(&mut self) {
-        self.playback_state = PlaybackState::Playing;
-    }
-
-    pub fn stop(&mut self) {
-        self.playback_state = PlaybackState::Stopped;
-        let _ = self.audio_meta.take();
-        *self.elapsed.lock().unwrap() = 0;
-    }
+    elapsed: Arc<Mutex<u64>>,
 }
 
 impl TryFrom<CpalDevice> for AudioDevice {
@@ -102,13 +73,14 @@ impl TryFrom<CpalDevice> for AudioDevice {
 }
 
 impl AudioDevice {
-    pub fn build_stream(
-        &self,
-        audio_meta: AudioMeta,
-        samples: Arc<(Mutex<Vec<f32>>, Condvar)>,
-        sample_i: Arc<Mutex<(usize, usize)>>,
-        volume: Arc<Mutex<f32>>,
-    ) -> Result<CpalStream> {
+    pub fn build_cpal_stream(&self, stream_data: StreamData) -> Result<CpalStream> {
+        let StreamData {
+            audio_meta,
+            samples,
+            sample_i,
+            volume,
+        } = stream_data;
+
         let default_n_channels = self.stream_config.channels();
         let default_sample_rate = self.stream_config.sample_rate().0;
         let sample_format = self.stream_config.sample_format();
@@ -124,12 +96,20 @@ impl AudioDevice {
         bail!("abc");
     }
 
-    pub fn enable(&mut self) -> Result<()> {
+    // give the current stream to the new device so it can "join in"
+    pub fn enable(&mut self, stream_data: Option<StreamData>) -> Result<()> {
+        if let Some(stream_data) = stream_data {
+            let stream = self.build_cpal_stream(stream_data)?;
+            self.start(stream)?;
+        }
+        self.enabled = true;
+
         Ok(())
     }
 
-    pub fn disable(&mut self) -> Result<()> {
-        Ok(())
+    pub fn disable(&mut self) {
+        let _ = self.stream.take();
+        self.enabled = false;
     }
 
     pub fn start(&mut self, stream: CpalStream) -> Result<()> {
@@ -164,19 +144,25 @@ impl AudioDevice {
     }
 }
 
-impl AudioBackend {
-    pub fn new() -> Self {
-        let state = AudioState::default();
-
+impl Default for Audio {
+    fn default() -> Self {
         Self {
+            playback_state: PlaybackState::default(),
             devices: HashMap::new(),
-            state,
+            stream_data: None,
+            elapsed: Arc::new(Mutex::new(0)),
         }
+    }
+}
+
+impl Audio {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn with_default(mut self, default_device_name: &str) -> Result<Self> {
         self.add_device(default_device_name)?;
-        self.enable_device(default_device_name);
+        self.enable_device(default_device_name)?;
 
         Ok(self)
     }
@@ -189,13 +175,33 @@ impl AudioBackend {
         Ok(())
     }
 
-    pub fn enable_device(&mut self, device_name: &str) {
-        if let Some(device) = self.devices.get_mut(device_name) {
-            device.enabled = true;
+    pub fn enable_device(&mut self, device_name: &str) -> Result<()> {
+        if let Some(mut device) = self.devices.get_mut(device_name) {
+            device.enable(self.stream_data.clone())?;
+        }
+
+        Ok(())
+    }
+
+    pub fn disable_device(&mut self, device_name: &str) {
+        if let Some(mut device) = self.devices.get_mut(device_name) {
+            device.disable();
         }
     }
 
-    pub fn start_playback(
+    pub fn toggle_device(&mut self, device_name: &str) -> Result<()> {
+        if let Some(mut device) = self.devices.get_mut(device_name) {
+            if device.enabled {
+                device.disable();
+            } else {
+                device.enable(self.stream_data.clone())?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn start(
         &mut self,
         song: &Song,
         mut rx_seek: SeekReceiver,
@@ -208,16 +214,22 @@ impl AudioBackend {
         let samples = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
         let sample_i = Arc::new(Mutex::new((0, 0))); // (last processed sample, target sample)
 
+        let volume = match &self.stream_data {
+            Some(stream_data) => Arc::clone(&stream_data.volume),
+            None => Arc::new(Mutex::new(0.5)),
+        };
+        let stream_data = StreamData {
+            audio_meta: song.audio_meta,
+            samples: Arc::clone(&samples),
+            sample_i: Arc::clone(&sample_i),
+            volume,
+        };
         for device in self.devices.values_mut().filter(|d| d.enabled) {
-            let stream = device.build_stream(
-                song.audio_meta,
-                Arc::clone(&samples),
-                Arc::clone(&sample_i),
-                Arc::clone(&self.state.volume),
-            )?;
+            let stream = device.build_cpal_stream(stream_data.clone())?;
             device.start(stream)?;
         }
-        self.state.start(song.audio_meta);
+        self.playback_state = PlaybackState::Playing;
+        self.stream_data = Some(stream_data);
 
         tokio::spawn(async move {
             // this task will end when tx_seek is dropped in the Player
@@ -245,40 +257,40 @@ impl AudioBackend {
         Ok(())
     }
 
-    pub fn pause_playback(&mut self) -> Result<()> {
+    pub fn pause(&mut self) -> Result<()> {
         for device in self.devices.values_mut().filter(|d| d.enabled) {
             device.pause()?;
         }
-        self.state.pause();
+        self.playback_state = PlaybackState::Paused;
 
         Ok(())
     }
 
-    pub fn resume_playback(&mut self) -> Result<()> {
+    pub fn resume(&mut self) -> Result<()> {
         for device in self.devices.values_mut().filter(|d| d.enabled) {
             device.resume()?;
         }
-        self.state.resume();
+        self.playback_state = PlaybackState::Playing;
 
         Ok(())
     }
 
-    pub fn stop_playback(&mut self) {
+    pub fn stop(&mut self) {
         for device in self.devices.values_mut().filter(|d| d.enabled) {
             device.stop();
         }
-        self.state.stop();
+        self.playback_state = PlaybackState::Stopped;
+        let _ = self.stream_data.take();
+        *self.elapsed.lock().unwrap() = 0;
     }
 
-    pub fn toggle_playback(&mut self) -> Result<()> {
-        match self.state.playback_state {
-            PlaybackState::Playing => self.pause_playback(),
-            PlaybackState::Paused => self.resume_playback(),
+    pub fn toggle(&mut self) -> Result<()> {
+        match self.playback_state {
+            PlaybackState::Playing => self.pause(),
+            PlaybackState::Paused => self.resume(),
             _ => Ok(()),
         }
     }
-
-    // get_elapsed, set/get_volume, ...
 }
 
 mod audio_utils {

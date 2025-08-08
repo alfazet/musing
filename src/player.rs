@@ -7,7 +7,7 @@ use tokio::{
 };
 
 use crate::{
-    audio::AudioBackend,
+    audio::Audio,
     config::PlayerConfig,
     database::Database,
     error::MyError,
@@ -19,7 +19,7 @@ type ReceiverFromServer = mpsc::UnboundedReceiver<Request>;
 struct Player {
     queue: Queue,
     database: Database,
-    audio_backend: AudioBackend,
+    audio_backend: Audio,
 }
 
 impl Player {
@@ -91,7 +91,7 @@ impl Player {
         }
     }
 
-    pub fn new(database: Database, audio_backend: AudioBackend) -> Self {
+    pub fn new(database: Database, audio_backend: Audio) -> Self {
         Self {
             queue: Queue::default(),
             database,
@@ -126,7 +126,7 @@ pub async fn run(player_config: PlayerConfig, rx: ReceiverFromServer) -> Result<
         music_dir,
         allowed_exts,
     } = player_config;
-    let audio_backend = AudioBackend::new().with_default(default_audio_device.as_str())?;
+    let audio_backend = Audio::new().with_default(default_audio_device.as_str())?;
     let database = {
         let (tx, rx) = oneshot::channel();
         rayon::spawn(move || {
