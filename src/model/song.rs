@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use std::{
     collections::HashMap,
     fs::File,
+    mem,
     path::{Path, PathBuf},
 };
 use symphonia::core::{
@@ -13,8 +14,14 @@ use symphonia::core::{
     meta::{self, Metadata, MetadataOptions, MetadataRevision},
     probe::{Hint, ProbeResult, ProbedMetadata},
 };
+use tokio::{sync::mpsc, task};
 
 use crate::{error::MyError, model::tag_key::TagKey, utils};
+
+pub type SampleReceiver = mpsc::Receiver<Vec<f32>>;
+pub type SampleSender = mpsc::Sender<Vec<f32>>;
+
+const BUF_SIZE: usize = 4096;
 
 #[derive(Default)]
 pub struct SongMeta {
@@ -22,7 +29,7 @@ pub struct SongMeta {
     // TODO: cover_art: (),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct AudioMeta {
     pub n_channels: Option<u16>,
     pub bit_depth: Option<u32>,
@@ -108,6 +115,54 @@ impl TryFrom<&Path> for Song {
         };
 
         Ok(song)
+    }
+}
+
+impl Song {
+    pub fn spawn_sample_producer(&self, tx: SampleSender) -> Result<()> {
+        let mut format_reader = get_probe_result(&self.path)?.format;
+        let track = format_reader.default_track().ok_or(MyError::File(format!(
+            "No audio track found in `{}`",
+            self.path.to_string_lossy()
+        )))?;
+        let decoder_opts: DecoderOptions = Default::default();
+        let mut decoder =
+            symphonia::default::get_codecs().make(&track.codec_params, &decoder_opts)?;
+        let track_id = track.id;
+
+        tokio::spawn(async move {
+            let mut batch = Vec::new();
+            while let Ok(packet) = format_reader.next_packet() {
+                if packet.track_id() != track_id {
+                    continue;
+                }
+                match decoder.decode(&packet) {
+                    Ok(decoded) => {
+                        if decoded.frames() > 0 {
+                            let spec = *decoded.spec();
+                            let mut buf = SampleBuffer::new(decoded.frames() as u64, spec);
+                            buf.copy_interleaved_ref(decoded);
+                            batch.extend_from_slice(buf.samples());
+                            if batch.len() >= BUF_SIZE {
+                                let to_send: Vec<_> = mem::take(&mut batch);
+                                if tx.send(to_send).await.is_err() {
+                                    // receiver went out of scope because playback had been stopped
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    // decoding errors aren't unusual
+                    Err(symphonia::core::errors::Error::DecodeError(_)) => (),
+                    Err(e) => log::warn!("{}", e),
+                }
+            }
+            if !batch.is_empty() {
+                let _ = tx.send(batch).await;
+            }
+        });
+
+        Ok(())
     }
 }
 

@@ -144,16 +144,17 @@ impl Database {
         let values: Vec<_> = ids
             .into_par_iter()
             .map(|id| {
-                if let Ok(i) = self.data_rows.binary_search_by_key(&id, |row| row.id) {
-                    let data = tags.iter().cloned().map(|tag| {
-                        let value = self.data_rows[i].song.song_meta.get(&tag).into();
-                        (tag.to_string(), value)
-                    });
+                self.data_rows
+                    .binary_search_by_key(&id, |row| row.id)
+                    .map(|i| {
+                        let data = tags.iter().cloned().map(|tag| {
+                            let value = self.data_rows[i].song.song_meta.get(&tag).into();
+                            (tag.to_string(), value)
+                        });
 
-                    Some(Map::from_iter(data))
-                } else {
-                    None
-                }
+                        Some(Map::from_iter(data))
+                    })
+                    .ok()
             })
             .collect();
 
