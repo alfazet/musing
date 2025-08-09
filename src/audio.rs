@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, bail};
 use cpal::{
-    BufferSize, Data as CpalData, Device as CpalDevice, OutputCallbackInfo, SampleFormat,
-    SampleRate, StreamConfig, SupportedStreamConfig,
+    BufferSize, Data as CpalData, Device as CpalDevice, FromSample, OutputCallbackInfo,
+    SampleFormat, SampleRate, SizedSample, StreamConfig, SupportedStreamConfig,
     platform::Stream as CpalStream,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
@@ -10,21 +10,33 @@ use std::{
     collections::HashMap,
     fs::File,
     mem,
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant},
 };
-use symphonia::core::{
-    conv::{FromSample, IntoSample},
-    units::TimeBase,
-};
+use symphonia::core::units::TimeBase;
 use tokio::{
-    sync::{mpsc, oneshot::Sender as OneShotSender},
+    sync::mpsc,
     task::{self, JoinHandle},
 };
 
 use crate::{error::MyError, model::song::*};
 
-type SeekReceiver = mpsc::UnboundedReceiver<i32>;
+const UNDERRUN_THRESHOLD: u64 = 250;
+
+trait Sample: FromSample<f32> + SizedSample + Send + 'static {}
+
+impl Sample for i8 {}
+impl Sample for i16 {}
+impl Sample for i32 {}
+impl Sample for u8 {}
+impl Sample for u16 {}
+impl Sample for u32 {}
+impl Sample for f32 {}
+impl Sample for f64 {}
+
+// type SeekReceiver = mpsc::UnboundedReceiver<i32>;
+type SenderSongOver = mpsc::Sender<()>;
+type ReceiverSamples = crossbeam_channel::Receiver<Vec<f32>>;
 
 #[derive(Debug, Default)]
 enum PlaybackState {
@@ -37,9 +49,10 @@ enum PlaybackState {
 #[derive(Clone)]
 struct StreamData {
     audio_meta: AudioMeta,
-    samples: Arc<(Mutex<Vec<f32>>, Condvar)>,
-    sample_i: Arc<Mutex<(usize, usize)>>,
-    volume: Arc<Mutex<f32>>,
+    rx_samples: ReceiverSamples,
+    tx_over: SenderSongOver,
+    volume: Arc<RwLock<f32>>,
+    elapsed: Arc<RwLock<u64>>,
 }
 
 struct AudioDevice {
@@ -53,7 +66,6 @@ pub struct Audio {
     playback_state: PlaybackState,
     stream_data: Option<StreamData>,
     devices: HashMap<String, AudioDevice>,
-    elapsed: Arc<Mutex<u64>>,
 }
 
 impl TryFrom<CpalDevice> for AudioDevice {
@@ -73,14 +85,67 @@ impl TryFrom<CpalDevice> for AudioDevice {
 }
 
 impl AudioDevice {
-    pub fn build_cpal_stream(&self, stream_data: StreamData) -> Result<CpalStream> {
+    fn create_data_callback<T>(
+        &self,
+        stream_data: StreamData,
+        time_base: TimeBase,
+    ) -> Result<impl FnMut(&mut [T], &OutputCallbackInfo) + Send + 'static>
+    where
+        T: Sample,
+    {
         let StreamData {
             audio_meta,
-            samples,
-            sample_i,
+            rx_samples,
+            tx_over,
             volume,
+            elapsed,
         } = stream_data;
 
+        let transform_samples = move |samples: &[f32]| -> Vec<T> {
+            let volume = { *volume.read().unwrap() };
+            samples.into_iter().map(|s| T::from_sample(*s)).collect()
+        };
+
+        let mut samples = Vec::new();
+        let mut target_sample = 0;
+        let callback = move |data: &mut [T], _: &OutputCallbackInfo| {
+            target_sample += data.len();
+            // TODO: seek
+            loop {
+                match rx_samples.recv_timeout(Duration::from_millis(UNDERRUN_THRESHOLD)) {
+                    Ok(new_samples) => {
+                        samples.extend(new_samples);
+                        if samples.len() >= target_sample {
+                            break;
+                        }
+                    }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        if target_sample >= samples.len() {
+                            let _ = tx_over.blocking_send(());
+                            return;
+                        }
+                        break;
+                    }
+                    Err(RecvTimeoutError::Timeout) => {
+                        data.fill(T::EQUILIBRIUM);
+                        return;
+                    }
+                }
+            }
+            let cur_slice = &samples[(target_sample - data.len())..target_sample];
+            data.copy_from_slice(&transform_samples(cur_slice));
+            let elapsed_here = time_base.calc_time(target_sample as u64).seconds;
+            let elapsed_global = { *elapsed.read().unwrap() };
+            if elapsed_here > elapsed_global {
+                *elapsed.write().unwrap() = elapsed_here;
+            }
+        };
+
+        Ok(callback)
+    }
+
+    fn build_cpal_stream(&self, stream_data: StreamData) -> Result<CpalStream> {
+        let audio_meta = stream_data.audio_meta;
         let default_n_channels = self.stream_config.channels();
         let default_sample_rate = self.stream_config.sample_rate().0;
         let sample_format = self.stream_config.sample_format();
@@ -89,11 +154,37 @@ impl AudioDevice {
             sample_rate: SampleRate(audio_meta.sample_rate.unwrap_or(default_sample_rate)),
             buffer_size: BufferSize::Default,
         };
+        let time_base = TimeBase {
+            numer: 1,
+            denom: stream_config.sample_rate.0 * (stream_config.channels as u32),
+        }; // the fraction of a second that correponds to one sample
 
-        // the entire macro
-        // let callback = ...
+        macro_rules! build_output_stream {
+            ($type:ty) => {
+                Ok(self.cpal_device.build_output_stream(
+                    &stream_config,
+                    self.create_data_callback::<$type>(stream_data, time_base)?,
+                    |e| log::error!("{}", e),
+                    None,
+                )?)
+            };
+        }
 
-        bail!("abc");
+        use SampleFormat::*;
+        match sample_format {
+            I8 => build_output_stream!(i8),
+            I16 => build_output_stream!(i16),
+            I32 => build_output_stream!(i32),
+            U8 => build_output_stream!(u8),
+            U16 => build_output_stream!(u16),
+            U32 => build_output_stream!(u32),
+            F32 => build_output_stream!(f32),
+            F64 => build_output_stream!(f64),
+            x => bail!(MyError::Audio(format!(
+                "Sample format {:?} is not supported",
+                x
+            ))),
+        }
     }
 
     // give the current stream to the new device so it can "join in"
@@ -150,7 +241,6 @@ impl Default for Audio {
             playback_state: PlaybackState::default(),
             devices: HashMap::new(),
             stream_data: None,
-            elapsed: Arc::new(Mutex::new(0)),
         }
     }
 }
@@ -201,28 +291,23 @@ impl Audio {
         Ok(())
     }
 
-    pub fn start(
-        &mut self,
-        song: &Song,
-        mut rx_seek: SeekReceiver,
-        tx_over: OneShotSender<()>,
-    ) -> Result<()> {
-        // TODO: take a look at the typical number of samples in one batch
-        // and choose this number so that the producer is one second of audio ahead
-        let (tx_samples, mut rx_samples) = mpsc::channel(1);
+    // TODO: seek
+    pub fn start(&mut self, song: &Song, tx_over: SenderSongOver) -> Result<()> {
+        let audio_meta = song.audio_meta;
+        let (tx_samples, rx_samples) = crossbeam_channel::bounded(1);
         song.spawn_sample_producer(tx_samples)?;
-        let samples = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
-        let sample_i = Arc::new(Mutex::new((0, 0))); // (last processed sample, target sample)
 
         let volume = match &self.stream_data {
             Some(stream_data) => Arc::clone(&stream_data.volume),
-            None => Arc::new(Mutex::new(0.5)),
+            None => Arc::new(RwLock::new(1.0)),
         };
+        let elapsed = Arc::new(RwLock::new(0));
         let stream_data = StreamData {
-            audio_meta: song.audio_meta,
-            samples: Arc::clone(&samples),
-            sample_i: Arc::clone(&sample_i),
+            audio_meta,
+            rx_samples,
+            tx_over,
             volume,
+            elapsed,
         };
         for device in self.devices.values_mut().filter(|d| d.enabled) {
             let stream = device.build_cpal_stream(stream_data.clone())?;
@@ -230,29 +315,6 @@ impl Audio {
         }
         self.playback_state = PlaybackState::Playing;
         self.stream_data = Some(stream_data);
-
-        tokio::spawn(async move {
-            // this task will end when tx_seek is dropped in the Player
-            let (samples, samples_cvar) = &*samples;
-            loop {
-                tokio::select! {
-                    res = rx_samples.recv() => if let Some(new_samples) = res {
-                        let mut samples = samples.lock().unwrap();
-                        samples.extend(new_samples);
-                        samples_cvar.notify_one();
-
-                        // send on tx_over if over
-                    },
-                    // TODO: rx_seek could as well receive a message when a new device becomes
-                    // enabled/disabled
-                    res = rx_seek.recv() => match res {
-                        Some(seek) => (),
-                        None => break,
-                    },
-                    else => break,
-                }
-            }
-        });
 
         Ok(())
     }
@@ -281,7 +343,6 @@ impl Audio {
         }
         self.playback_state = PlaybackState::Stopped;
         let _ = self.stream_data.take();
-        *self.elapsed.lock().unwrap() = 0;
     }
 
     pub fn toggle(&mut self) -> Result<()> {

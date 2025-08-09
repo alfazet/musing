@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use crossbeam_channel::{RecvTimeoutError, TryRecvError};
 use std::{
     collections::HashMap,
     fs::File,
@@ -18,8 +19,7 @@ use tokio::{sync::mpsc, task};
 
 use crate::{error::MyError, model::tag_key::TagKey, utils};
 
-pub type SampleReceiver = mpsc::Receiver<Vec<f32>>;
-pub type SampleSender = mpsc::Sender<Vec<f32>>;
+pub type SenderSamples = crossbeam_channel::Sender<Vec<f32>>;
 
 const BUF_SIZE: usize = 4096;
 
@@ -119,7 +119,7 @@ impl TryFrom<&Path> for Song {
 }
 
 impl Song {
-    pub fn spawn_sample_producer(&self, tx: SampleSender) -> Result<()> {
+    pub fn spawn_sample_producer(&self, tx: SenderSamples) -> Result<()> {
         let mut format_reader = get_probe_result(&self.path)?.format;
         let track = format_reader.default_track().ok_or(MyError::File(format!(
             "No audio track found in `{}`",
@@ -130,7 +130,7 @@ impl Song {
             symphonia::default::get_codecs().make(&track.codec_params, &decoder_opts)?;
         let track_id = track.id;
 
-        tokio::spawn(async move {
+        tokio::task::spawn_blocking(move || {
             let mut batch = Vec::new();
             while let Ok(packet) = format_reader.next_packet() {
                 if packet.track_id() != track_id {
@@ -145,20 +145,18 @@ impl Song {
                             batch.extend_from_slice(buf.samples());
                             if batch.len() >= BUF_SIZE {
                                 let to_send: Vec<_> = mem::take(&mut batch);
-                                if tx.send(to_send).await.is_err() {
+                                if tx.send(to_send).is_err() {
                                     // receiver went out of scope because playback had been stopped
                                     return;
                                 }
                             }
                         }
                     }
-                    // decoding errors aren't unusual
-                    Err(symphonia::core::errors::Error::DecodeError(_)) => (),
                     Err(e) => log::warn!("{}", e),
                 }
             }
             if !batch.is_empty() {
-                let _ = tx.send(batch).await;
+                let _ = tx.send(batch);
             }
         });
 

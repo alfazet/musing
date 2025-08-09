@@ -72,11 +72,11 @@ impl Database {
         self.data_rows.last().map(|row| row.id).unwrap_or(0)
     }
 
-    pub fn song_by_id(&self, id: u32) -> Result<&Song> {
+    pub fn song_by_id(&self, id: u32) -> Option<&Song> {
         self.data_rows
             .binary_search_by_key(&id, |row| row.id)
             .map(|i| &self.data_rows[i].song)
-            .map_err(|_| MyError::Database(format!("Song with id `{}` not found", id)).into())
+            .ok()
     }
 
     pub fn update(&mut self) -> Response {

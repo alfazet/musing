@@ -1,4 +1,5 @@
 use anyhow::{Result, bail};
+use std::pin::Pin;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -15,15 +16,17 @@ use crate::{
 };
 
 type ReceiverFromServer = mpsc::UnboundedReceiver<Request>;
+type ReceiverSongOver = mpsc::Receiver<()>;
 
 struct Player {
     queue: Queue,
     database: Database,
-    audio_backend: Audio,
+    audio: Audio,
+    rx_over: ReceiverSongOver,
 }
 
 impl Player {
-    // database requests are blocking and (relatively) CPU-intensive,
+    // database requests are blocking and (mostly) parallelizable,
     // so we send them to rayon's thread pool
     async fn db_request(&mut self, kind: DbRequestKind) -> Result<Response> {
         let (tx, rx) = oneshot::channel();
@@ -53,37 +56,39 @@ impl Player {
                 let AddArgs(db_ids, insert_pos) = args;
                 let last_id = self.database.last_id();
                 for (offset, id) in db_ids.into_iter().enumerate() {
-                    if id > last_id {
-                        return Ok(Response::new_err(format!(
-                            "Song with id `{}` not found",
-                            id
-                        )));
-                    }
-                    match insert_pos {
-                        Some(pos) => self.queue.add(id, Some(pos + offset)),
-                        None => self.queue.add(id, None),
+                    match self.database.song_by_id(id) {
+                        Some(_) => match insert_pos {
+                            Some(pos) => self.queue.add(id, Some(pos + offset)),
+                            None => self.queue.add(id, None),
+                        },
+                        None => {
+                            return Ok(Response::new_err(format!(
+                                "Song with id `{}` not found in the database",
+                                id
+                            )));
+                        }
                     }
                 }
-
-                /*
-                for entry in self.queue.as_inner() {
-                    println!(
-                        "{:?}: {}",
-                        entry,
-                        self.database
-                            .song_by_id(entry.db_id)
-                            .unwrap()
-                            .song_meta
-                            .get(&crate::model::tag_key::TagKey::try_from("tracktitle").unwrap())
-                            .unwrap()
-                    );
-                }
-                */
 
                 Ok(Response::new_ok())
             }
             Kind::Play(args) => {
                 let PlayArgs(queue_id) = args;
+                let Some(db_id) = self.queue.db_id(queue_id) else {
+                    return Ok(Response::new_err(format!(
+                        "Song with queue_id `{}` not found in the queue",
+                        queue_id
+                    )));
+                };
+                let Some(song) = self.database.song_by_id(db_id) else {
+                    return Ok(Response::new_err(format!(
+                        "Song with db_id `{}` not found in the database",
+                        db_id
+                    )));
+                };
+                let (tx_over, rx_over) = mpsc::channel(1);
+                self.rx_over = rx_over;
+                self.audio.start(song, tx_over);
 
                 Ok(Response::new_ok())
             }
@@ -91,11 +96,13 @@ impl Player {
         }
     }
 
-    pub fn new(database: Database, audio_backend: Audio) -> Self {
+    pub fn new(database: Database, audio: Audio) -> Self {
+        let (_, rx_over) = mpsc::channel(1);
         Self {
             queue: Queue::default(),
             database,
-            audio_backend,
+            audio,
+            rx_over,
         }
     }
 
@@ -111,7 +118,9 @@ impl Player {
                     // breaks when all client handlers drop
                     None => break,
                 },
-                // rx_playback received an Over event
+                Some(_) = self.rx_over.recv() => {
+                    eprintln!("song ended");
+                },
                 else => break
             }
         }
@@ -126,7 +135,7 @@ pub async fn run(player_config: PlayerConfig, rx: ReceiverFromServer) -> Result<
         music_dir,
         allowed_exts,
     } = player_config;
-    let audio_backend = Audio::new().with_default(default_audio_device.as_str())?;
+    let audio = Audio::new().with_default(default_audio_device.as_str())?;
     let database = {
         let (tx, rx) = oneshot::channel();
         rayon::spawn(move || {
@@ -134,7 +143,7 @@ pub async fn run(player_config: PlayerConfig, rx: ReceiverFromServer) -> Result<
         });
         rx.await?
     };
-    let mut player = Player::new(database, audio_backend);
+    let mut player = Player::new(database, audio);
 
     player.run(rx).await
 }

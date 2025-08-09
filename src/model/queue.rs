@@ -1,5 +1,8 @@
+use anyhow::Result;
 use rand::{prelude::*, seq::SliceRandom};
 use std::{collections::HashSet, mem};
+
+use crate::error::MyError;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Entry {
@@ -51,6 +54,11 @@ impl Queue {
 
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn db_id(&self, queue_id: u32) -> Option<u32> {
+        let i = self.find_by_id(queue_id)?;
+        Some(self.list[i].db_id)
     }
 
     pub fn current(&self) -> Option<Entry> {

@@ -136,6 +136,19 @@ impl TryFrom<&[String]> for AddArgs {
     }
 }
 
+impl TryFrom<&[String]> for PlayArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &[String]) -> Result<Self> {
+        if args.is_empty() {
+            bail!(MyError::Syntax("Invalid arguments to `play`".into()));
+        }
+        let id = args[0].parse::<u32>()?;
+
+        Ok(Self(id))
+    }
+}
+
 impl TryFrom<&str> for RequestKind {
     type Error = anyhow::Error;
 
@@ -154,6 +167,7 @@ impl TryFrom<&str> for RequestKind {
             "metadata" => Kind::Db(DbKind::Metadata(tokens[1..].try_into()?)),
             "unique" => Kind::Db(DbKind::Unique(tokens[1..].try_into()?)),
             "add" => Kind::Add(tokens[1..].try_into()?),
+            "play" => Kind::Play(tokens[1..].try_into()?),
             _ => bail!(MyError::Syntax("Invalid request".into())),
         };
 

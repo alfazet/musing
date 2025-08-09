@@ -5,6 +5,7 @@ pub enum MyError {
     Audio(String),
     Database(String),
     File(String),
+    Queue(String),
     Syntax(String),
 }
 
@@ -14,6 +15,7 @@ impl Display for MyError {
             Self::Audio(e) => write!(f, "AudioError: {}", e),
             Self::Database(e) => write!(f, "DatabaseError: {}", e),
             Self::File(e) => write!(f, "FileError: {}", e),
+            Self::Queue(e) => write!(f, "QueueError: {}", e),
             Self::Syntax(e) => write!(f, "SyntaxError: {}", e),
         }
     }
