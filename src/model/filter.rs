@@ -23,6 +23,7 @@ struct RegexFilter {
 struct NullFilter; // matches everything
 
 // TODO: FuzzyFilter based on edit distance
+// TODO: ignore caps by default
 
 pub enum FilterExprOperator {
     OpAnd,

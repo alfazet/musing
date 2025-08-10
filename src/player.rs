@@ -75,11 +75,26 @@ impl Player {
         match req {
             PlaybackRequestKind::Pause => self.audio.pause().into(),
             PlaybackRequestKind::Resume => self.audio.resume().into(),
+            PlaybackRequestKind::Seek(args) => {
+                let SeekArgs(secs) = args;
+                self.audio.seek(secs);
+
+                Response::new_ok()
+            }
             PlaybackRequestKind::Stop => {
                 self.queue.reset_pos();
                 self.audio.stop().into()
             }
             PlaybackRequestKind::Toggle => self.audio.toggle().into(),
+            PlaybackRequestKind::Volume(args) => {
+                let VolumeArgs(volume) = args;
+                match volume {
+                    Volume::Change(x) => self.audio.change_volume(x),
+                    Volume::Set(x) => self.audio.set_volume(x),
+                }
+
+                Response::new_ok()
+            }
             _ => todo!(),
         }
     }
@@ -132,6 +147,9 @@ impl Player {
             },
             StatusRequestKind::Elapsed => {
                 Response::new_ok().with_item("elapsed".into(), &self.audio.elapsed())
+            }
+            StatusRequestKind::Volume => {
+                Response::new_ok().with_item("volume".into(), &self.audio.volume())
             }
             _ => todo!(),
         }

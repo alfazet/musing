@@ -34,10 +34,11 @@ impl Sample for u32 {}
 impl Sample for f32 {}
 impl Sample for f64 {}
 
-// type SeekReceiver = mpsc::UnboundedReceiver<i32>;
+type SenderSeek = crossbeam_channel::Sender<i32>;
+type ReceiverSeek = crossbeam_channel::Receiver<i32>;
 type SenderSongOver = mpsc::Sender<()>;
 
-#[derive(Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 enum PlaybackState {
     Playing,
     Paused,
@@ -48,8 +49,8 @@ enum PlaybackState {
 #[derive(Clone)]
 struct StreamData {
     song: PlayerSong,
+    rx_seek: ReceiverSeek,
     tx_over: SenderSongOver,
-    volume: Arc<RwLock<f32>>,
     elapsed: Arc<RwLock<u64>>,
 }
 
@@ -60,11 +61,12 @@ struct AudioDevice {
     enabled: bool,
 }
 
-#[derive(Default)]
 pub struct Audio {
     playback_state: PlaybackState,
     stream_data: Option<StreamData>,
     devices: HashMap<String, AudioDevice>,
+    volume: Arc<RwLock<u8>>,
+    tx_seek: SenderSeek,
 }
 
 impl TryFrom<CpalDevice> for AudioDevice {
@@ -94,28 +96,24 @@ impl AudioDevice {
     {
         let StreamData {
             song,
+            rx_seek,
             tx_over,
-            volume,
             elapsed,
         } = stream_data;
 
-        let transform_samples = move |samples: &[f32]| -> Vec<T> {
-            let volume = { *volume.read().unwrap() };
-            samples
-                .iter()
-                .map(|s| {
-                    let s = (*s * volume).clamp(-1.0, 1.0);
-
-                    T::from_sample(s)
-                })
-                .collect()
-        };
-
         let mut samples = Vec::new();
         let mut target_sample = 0;
+
         let callback = move |data: &mut [T], _: &OutputCallbackInfo| {
+            let seek = rx_seek.try_recv().unwrap_or(0);
+            if seek > 0 {
+                target_sample += (time_base.denom as usize) * (seek as usize);
+            } else if seek < 0 {
+                target_sample = target_sample
+                    .saturating_sub((time_base.denom as usize) * (seek.unsigned_abs() as usize));
+            }
             target_sample += data.len();
-            // TODO: seek
+
             loop {
                 match song
                     .rx_samples
@@ -140,11 +138,14 @@ impl AudioDevice {
                     }
                 }
             }
-            let cur_slice = &samples[(target_sample - data.len())..target_sample];
-            data.copy_from_slice(&transform_samples(cur_slice));
+            let cur_slice: Vec<T> = samples[(target_sample - data.len())..target_sample]
+                .iter()
+                .map(|s| T::from_sample(*s))
+                .collect();
+            data.copy_from_slice(&cur_slice);
             let elapsed_here = time_base.calc_time(target_sample as u64).seconds;
             let elapsed_global = { *elapsed.read().unwrap() };
-            if elapsed_here > elapsed_global {
+            if elapsed_here != elapsed_global {
                 *elapsed.write().unwrap() = elapsed_here;
             }
         };
@@ -243,6 +244,19 @@ impl AudioDevice {
     }
 }
 
+impl Default for Audio {
+    fn default() -> Self {
+        let (tx_seek, _) = crossbeam_channel::unbounded();
+        Self {
+            playback_state: PlaybackState::default(),
+            stream_data: None,
+            devices: HashMap::new(),
+            volume: Arc::new(RwLock::new(50)),
+            tx_seek,
+        }
+    }
+}
+
 impl Audio {
     pub fn new() -> Self {
         Self::default()
@@ -289,17 +303,34 @@ impl Audio {
         Ok(())
     }
 
-    // TODO: seek
-    pub fn start(&mut self, song: PlayerSong, tx_over: SenderSongOver) -> Result<()> {
-        let volume = match &self.stream_data {
-            Some(stream_data) => Arc::clone(&stream_data.volume),
-            None => Arc::new(RwLock::new(1.0)),
-        };
+    pub fn start(&mut self, mut song: PlayerSong, tx_over: SenderSongOver) -> Result<()> {
+        // a "middleman" task to transform samples before they're written to devices
+        let (tx_middle, rx_middle) = crossbeam_channel::bounded(1);
+        let rx_samples = mem::replace(&mut song.rx_samples, rx_middle);
+        let volume = Arc::clone(&self.volume);
+        tokio::task::spawn_blocking(move || {
+            loop {
+                match rx_samples.recv() {
+                    Ok(mut samples) => {
+                        let v = { *volume.read().unwrap() };
+                        let mult = audio_utils::volume_to_mult(v);
+                        samples = samples
+                            .into_iter()
+                            .map(|s| (s * mult).clamp(-1.0, 1.0))
+                            .collect();
+                        let _ = tx_middle.send(samples);
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let (tx_seek, rx_seek) = crossbeam_channel::unbounded();
         let elapsed = Arc::new(RwLock::new(0));
         let stream_data = StreamData {
             song,
+            rx_seek,
             tx_over,
-            volume,
             elapsed,
         };
         for device in self.devices.values_mut().filter(|d| d.enabled) {
@@ -308,6 +339,7 @@ impl Audio {
         }
         self.playback_state = PlaybackState::Playing;
         self.stream_data = Some(stream_data);
+        self.tx_seek = tx_seek;
 
         Ok(())
     }
@@ -336,14 +368,30 @@ impl Audio {
         Ok(())
     }
 
+    pub fn seek(&mut self, secs: i32) {
+        let _ = self.tx_seek.send(secs);
+        if let (Some(stream_data), PlaybackState::Paused) =
+            (self.stream_data.as_ref(), self.playback_state)
+        {
+            // TODO: this can go beyond the duration of the song
+            // PlayerSong should also contain an Option<Duration>
+            // to prevent this (and to show song durations to the client)
+            if secs > 0 {
+                *stream_data.elapsed.write().unwrap() += (secs as u64);
+            } else if secs < 0 {
+                let cur_elapsed = { *stream_data.elapsed.read().unwrap() };
+                let new_elapsed = cur_elapsed.saturating_sub(secs.unsigned_abs() as u64);
+                *stream_data.elapsed.write().unwrap() = new_elapsed;
+            }
+        }
+    }
+
     pub fn stop(&mut self) -> Result<()> {
         for device in self.devices.values_mut().filter(|d| d.enabled) {
             device.stop();
         }
         self.playback_state = PlaybackState::Stopped;
-        if let Some(ref stream_data) = self.stream_data {
-            *stream_data.elapsed.write().unwrap() = 0;
-        }
+        let _ = self.stream_data.take();
 
         Ok(())
     }
@@ -356,11 +404,29 @@ impl Audio {
         }
     }
 
+    pub fn change_volume(&mut self, x: i8) {
+        let cur_vol = { *self.volume.read().unwrap() };
+        let new_vol = if x < 0 {
+            cur_vol.saturating_sub(x.unsigned_abs())
+        } else {
+            (cur_vol + (x as u8)).clamp(0, 100)
+        };
+        *self.volume.write().unwrap() = new_vol;
+    }
+
+    pub fn set_volume(&mut self, x: u8) {
+        *self.volume.write().unwrap() = x.clamp(0, 100);
+    }
+
     pub fn elapsed(&self) -> u64 {
         self.stream_data
             .as_ref()
             .map(|data| *data.elapsed.read().unwrap())
             .unwrap_or(0)
+    }
+
+    pub fn volume(&self) -> u8 {
+        *self.volume.read().unwrap()
     }
 }
 
@@ -372,5 +438,11 @@ mod audio_utils {
         host.output_devices()?
             .find(|x| x.name().map(|s| s == device_name).unwrap_or(false))
             .ok_or(MyError::Audio(format!("Audio device `{}` unavailable", device_name)).into())
+    }
+
+    // non-linear volume slider
+    // source: https://www.dr-lex.be/info-stuff/volumecontrols.html
+    pub fn volume_to_mult(v: u8) -> f32 {
+        (0.07 * (v as f32)).exp() / 1000.0
     }
 }

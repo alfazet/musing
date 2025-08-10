@@ -10,9 +10,8 @@ use crate::{
 type RespondTo = oneshot::Sender<Response>;
 
 pub enum Volume {
-    Inc(f32),
-    Dec(f32),
-    Set(f32),
+    Change(i8),
+    Set(u8),
 }
 
 pub struct MetadataArgs(pub Vec<u32>, pub Vec<TagKey>);
@@ -138,25 +137,43 @@ impl TryFrom<&[String]> for UniqueArgs {
     }
 }
 
-/*
+impl TryFrom<&[String]> for SeekArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &[String]) -> Result<Self> {
+        if args.is_empty() {
+            bail!(MyError::Syntax("Invalid arguments to `seek`".into()));
+        }
+        let secs = args[0].parse::<i32>()?;
+
+        Ok(Self(secs))
+    }
+}
+
 impl TryFrom<&[String]> for VolumeArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &[String]) -> Result<Self> {
         // args are non-empty here
         let chars: Vec<_> = args[0].chars().collect();
-        match chars.first().unwrap() {
-            '+' => Ok(args[0]
-                .trim_matches('+')
-                .parse::<u32>()
-                .map(|x| Self(Volume::Inc((x as f32) / 100.0))))?,
-            _ => Ok(args[0]
-                .parse::<u32>()
-                .map(|x| Self(Volume::Set((x as f32) / 100.0))))?,
-        }
+        let volume = match chars.first().unwrap() {
+            '+' => {
+                let x = args[0].trim_start_matches('+').parse::<i8>()?;
+                Volume::Change(x)
+            }
+            '-' => {
+                let x = args[0].parse::<i8>()?;
+                Volume::Change(x)
+            }
+            _ => {
+                let x = args[0].parse::<u8>()?;
+                Volume::Set(x)
+            }
+        };
+
+        Ok(Self(volume))
     }
 }
-*/
 
 impl TryFrom<&[String]> for AddArgs {
     type Error = anyhow::Error;
@@ -209,6 +226,7 @@ impl TryFrom<&str> for RequestKind {
 
                 "pause" => Request::Playback(Playback::Pause),
                 "resume" => Request::Playback(Playback::Resume),
+                "seek" => Request::Playback(Playback::Seek(tokens[1..].try_into()?)),
                 "stop" => Request::Playback(Playback::Stop),
                 "toggle" => Request::Playback(Playback::Toggle),
 
@@ -220,10 +238,10 @@ impl TryFrom<&str> for RequestKind {
                 "current" => Request::Status(Status::Current),
                 "elapsed" => Request::Status(Status::Elapsed),
                 "playlist" => Request::Status(Status::Playlist),
-                // "volume" => match tokens.len() {
-                //     1 => Request::Status(Status::Volume),
-                //     _ => Request::Playback(Playback::Volume(tokens[1..].try_into()?)),
-                // },
+                "volume" => match tokens.len() {
+                    1 => Request::Status(Status::Volume),
+                    _ => Request::Playback(Playback::Volume(tokens[1..].try_into()?)),
+                },
 
                 _ => bail!(MyError::Syntax("Invalid request".into())),
             },
