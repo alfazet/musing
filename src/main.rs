@@ -9,7 +9,6 @@ mod database;
 mod error;
 mod player;
 mod server;
-mod utils;
 
 mod model;
 mod parsers;

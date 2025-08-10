@@ -71,11 +71,23 @@ impl Player {
         rx.await.unwrap()
     }
 
+    fn playback_request(&mut self, req: PlaybackRequestKind) -> Response {
+        match req {
+            PlaybackRequestKind::Pause => self.audio.pause().into(),
+            PlaybackRequestKind::Resume => self.audio.resume().into(),
+            PlaybackRequestKind::Stop => {
+                self.queue.reset_pos();
+                self.audio.stop().into()
+            }
+            PlaybackRequestKind::Toggle => self.audio.toggle().into(),
+            _ => todo!(),
+        }
+    }
+
     fn queue_request(&mut self, req: QueueRequestKind) -> Response {
         match req {
             QueueRequestKind::Add(args) => {
                 let AddArgs(db_ids, insert_pos) = args;
-                let last_id = self.database.last_id();
                 for (offset, db_id) in db_ids.into_iter().enumerate() {
                     match self.song_by_db_id(db_id) {
                         Ok(_) => match insert_pos {
@@ -100,18 +112,27 @@ impl Player {
             }
             QueueRequestKind::Next => match self.queue.move_next() {
                 Some(entry) => self.play(entry.db_id).into(),
-                None => {
-                    self.audio.stop();
-                    Response::new_ok()
-                }
+                None => self.audio.stop().into(),
             },
             QueueRequestKind::Previous => match self.queue.move_prev() {
                 Some(entry) => self.play(entry.db_id).into(),
-                None => {
-                    self.audio.stop();
-                    Response::new_ok()
-                }
+                None => self.audio.stop().into(),
             },
+            _ => todo!(),
+        }
+    }
+
+    fn status_request(&self, req: StatusRequestKind) -> Response {
+        match req {
+            StatusRequestKind::Current => match self.queue.current() {
+                Some(entry) => Response::new_ok()
+                    .with_item("db_id".into(), &entry.db_id)
+                    .with_item("queue_id".into(), &entry.queue_id),
+                None => Response::new_err("No song is playing right now".into()),
+            },
+            StatusRequestKind::Elapsed => {
+                Response::new_ok().with_item("elapsed".into(), &self.audio.elapsed())
+            }
             _ => todo!(),
         }
     }
@@ -119,8 +140,9 @@ impl Player {
     async fn handle_request(&mut self, req: RequestKind) -> Response {
         match req {
             RequestKind::Db(req) => self.db_request(req).await,
+            RequestKind::Playback(req) => self.playback_request(req),
             RequestKind::Queue(req) => self.queue_request(req),
-            _ => todo!(),
+            RequestKind::Status(req) => self.status_request(req),
         }
     }
 
@@ -151,7 +173,10 @@ impl Player {
                         Some(entry) => {
                             let _ = self.play(entry.db_id);
                         }
-                        None => self.audio.stop(),
+                        None => {
+                            self.queue.reset_pos();
+                            let _ = self.audio.stop();
+                        }
                     }
                 },
                 else => break

@@ -7,7 +7,14 @@ use std::{
 };
 use symphonia::core::meta::StandardTagKey;
 
-use crate::{error::MyError, utils};
+use crate::error::MyError;
+
+macro_rules! enum_stringify {
+    ($variant:expr) => {{
+        let s = format!("{:?}", $variant);
+        s.split("::").last().unwrap().to_string()
+    }};
+}
 
 static TAG_NAMES: [&str; 30] = [
     "album",
@@ -99,7 +106,7 @@ lazy_static! {
 
 impl Display for TagKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", utils::enum_stringify!(self.key).to_lowercase())
+        write!(f, "{}", enum_stringify!(self.key).to_lowercase())
     }
 }
 
@@ -126,6 +133,6 @@ impl TryFrom<StandardTagKey> for TagKey {
     type Error = anyhow::Error;
 
     fn try_from(s_key: StandardTagKey) -> Result<Self> {
-        Self::try_from(utils::enum_stringify!(s_key).to_lowercase().as_str())
+        Self::try_from(enum_stringify!(s_key).to_lowercase().as_str())
     }
 }

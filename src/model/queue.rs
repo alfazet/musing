@@ -69,6 +69,10 @@ impl Queue {
         &self.list
     }
 
+    pub fn reset_pos(&mut self) {
+        let _ = self.pos.take();
+    }
+
     pub fn add_current_to_history(&mut self) {
         if let Some(current) = self.current() {
             self.history.insert(current.queue_id);

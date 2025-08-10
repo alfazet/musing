@@ -101,7 +101,14 @@ impl AudioDevice {
 
         let transform_samples = move |samples: &[f32]| -> Vec<T> {
             let volume = { *volume.read().unwrap() };
-            samples.iter().map(|s| T::from_sample(*s)).collect()
+            samples
+                .iter()
+                .map(|s| {
+                    let s = (*s * volume).clamp(-1.0, 1.0);
+
+                    T::from_sample(s)
+                })
+                .collect()
         };
 
         let mut samples = Vec::new();
@@ -306,6 +313,9 @@ impl Audio {
     }
 
     pub fn pause(&mut self) -> Result<()> {
+        if let PlaybackState::Stopped = self.playback_state {
+            return Ok(());
+        }
         for device in self.devices.values_mut().filter(|d| d.enabled) {
             device.pause()?;
         }
@@ -315,6 +325,9 @@ impl Audio {
     }
 
     pub fn resume(&mut self) -> Result<()> {
+        if let PlaybackState::Stopped = self.playback_state {
+            return Ok(());
+        }
         for device in self.devices.values_mut().filter(|d| d.enabled) {
             device.resume()?;
         }
@@ -323,12 +336,16 @@ impl Audio {
         Ok(())
     }
 
-    pub fn stop(&mut self) {
+    pub fn stop(&mut self) -> Result<()> {
         for device in self.devices.values_mut().filter(|d| d.enabled) {
             device.stop();
         }
         self.playback_state = PlaybackState::Stopped;
-        let _ = self.stream_data.take();
+        if let Some(ref stream_data) = self.stream_data {
+            *stream_data.elapsed.write().unwrap() = 0;
+        }
+
+        Ok(())
     }
 
     pub fn toggle(&mut self) -> Result<()> {
@@ -337,6 +354,13 @@ impl Audio {
             PlaybackState::Paused => self.resume(),
             _ => Ok(()),
         }
+    }
+
+    pub fn elapsed(&self) -> u64 {
+        self.stream_data
+            .as_ref()
+            .map(|data| *data.elapsed.read().unwrap())
+            .unwrap_or(0)
     }
 }
 

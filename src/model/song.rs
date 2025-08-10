@@ -17,7 +17,7 @@ use symphonia::core::{
 };
 use tokio::{sync::mpsc, task};
 
-use crate::{error::MyError, model::tag_key::TagKey, utils};
+use crate::{error::MyError, model::tag_key::TagKey};
 
 pub type SenderSamples = crossbeam_channel::Sender<Vec<f32>>;
 pub type ReceiverSamples = crossbeam_channel::Receiver<Vec<f32>>;

@@ -9,41 +9,47 @@ use crate::{
 
 type RespondTo = oneshot::Sender<Response>;
 
-pub struct SelectArgs(pub FilterExpr, pub Vec<Comparator>);
+pub enum Volume {
+    Inc(f32),
+    Dec(f32),
+    Set(f32),
+}
+
 pub struct MetadataArgs(pub Vec<u32>, pub Vec<TagKey>);
+pub struct SelectArgs(pub FilterExpr, pub Vec<Comparator>);
 pub struct UniqueArgs(pub TagKey, pub Vec<TagKey>, pub FilterExpr);
 pub enum DbRequestKind {
-    Update,
-    Select(SelectArgs),
     Metadata(MetadataArgs),
+    Select(SelectArgs),
     Unique(UniqueArgs),
+    Update,
 }
 
 pub struct SeekArgs(pub i32); // in seconds
-pub struct VolumeArgs(pub i32); // in range 0..=100
+pub struct VolumeArgs(pub Volume);
 pub enum PlaybackRequestKind {
     Pause,
     Resume,
-    Toggle,
-    Stop,
     Seek(SeekArgs),
+    Stop,
+    Toggle,
     Volume(VolumeArgs),
 }
 
 pub struct AddArgs(pub Vec<u32>, pub Option<usize>); // db ids
 pub struct PlayArgs(pub u32); // queue id
 pub enum QueueRequestKind {
-    Clear,
     Add(AddArgs),
-    Play(PlayArgs),
+    Clear,
     Next,
+    Play(PlayArgs),
     Previous,
 }
 
 pub enum StatusRequestKind {
+    Current,
     Elapsed,
     Playlist,
-    Song,
     Volume,
 }
 
@@ -51,33 +57,12 @@ pub enum RequestKind {
     Db(DbRequestKind),
     Playback(PlaybackRequestKind),
     Queue(QueueRequestKind),
+    Status(StatusRequestKind),
 }
 
 pub struct Request {
     pub kind: RequestKind,
     pub tx_response: RespondTo,
-}
-
-impl TryFrom<&[String]> for SelectArgs {
-    type Error = anyhow::Error;
-
-    fn try_from(args: &[String]) -> Result<Self> {
-        let filter_expr = args.first().map_or_else(
-            || Ok(FilterExpr::default()),
-            |s| FilterExpr::try_from(s.as_str()),
-        )?;
-        let sort_by = args
-            .get(1)
-            .map(|v| {
-                v.trim_end_matches(',')
-                    .split(',')
-                    .map(Comparator::try_from)
-                    .collect::<Result<Vec<Comparator>>>()
-            })
-            .unwrap_or(Ok(Vec::new()))?;
-
-        Ok(Self(filter_expr, sort_by))
-    }
 }
 
 impl TryFrom<&[String]> for MetadataArgs {
@@ -99,6 +84,28 @@ impl TryFrom<&[String]> for MetadataArgs {
             .collect::<Result<Vec<TagKey>>>()?;
 
         Ok(Self(ids, tags))
+    }
+}
+
+impl TryFrom<&[String]> for SelectArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &[String]) -> Result<Self> {
+        let filter_expr = args.first().map_or_else(
+            || Ok(FilterExpr::default()),
+            |s| FilterExpr::try_from(s.as_str()),
+        )?;
+        let sort_by = args
+            .get(1)
+            .map(|v| {
+                v.trim_end_matches(',')
+                    .split(',')
+                    .map(Comparator::try_from)
+                    .collect::<Result<Vec<Comparator>>>()
+            })
+            .unwrap_or(Ok(Vec::new()))?;
+
+        Ok(Self(filter_expr, sort_by))
     }
 }
 
@@ -130,6 +137,26 @@ impl TryFrom<&[String]> for UniqueArgs {
         Ok(Self(tag, group_by, filter_expr))
     }
 }
+
+/*
+impl TryFrom<&[String]> for VolumeArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &[String]) -> Result<Self> {
+        // args are non-empty here
+        let chars: Vec<_> = args[0].chars().collect();
+        match chars.first().unwrap() {
+            '+' => Ok(args[0]
+                .trim_matches('+')
+                .parse::<u32>()
+                .map(|x| Self(Volume::Inc((x as f32) / 100.0))))?,
+            _ => Ok(args[0]
+                .parse::<u32>()
+                .map(|x| Self(Volume::Set((x as f32) / 100.0))))?,
+        }
+    }
+}
+*/
 
 impl TryFrom<&[String]> for AddArgs {
     type Error = anyhow::Error;
@@ -170,6 +197,7 @@ impl TryFrom<&str> for RequestKind {
         use PlaybackRequestKind as Playback;
         use QueueRequestKind as Queue;
         use RequestKind as Request;
+        use StatusRequestKind as Status;
 
         let tokens = request::tokenize(s)?;
         let kind = match tokens.first().map(|s| s.as_str()) {
@@ -179,10 +207,23 @@ impl TryFrom<&str> for RequestKind {
                 "metadata" => Request::Db(Db::Metadata(tokens[1..].try_into()?)),
                 "unique" => Request::Db(Db::Unique(tokens[1..].try_into()?)),
 
+                "pause" => Request::Playback(Playback::Pause),
+                "resume" => Request::Playback(Playback::Resume),
+                "stop" => Request::Playback(Playback::Stop),
+                "toggle" => Request::Playback(Playback::Toggle),
+
                 "add" => Request::Queue(Queue::Add(tokens[1..].try_into()?)),
                 "play" => Request::Queue(Queue::Play(tokens[1..].try_into()?)),
                 "next" => Request::Queue(Queue::Next),
                 "previous" => Request::Queue(Queue::Previous),
+
+                "current" => Request::Status(Status::Current),
+                "elapsed" => Request::Status(Status::Elapsed),
+                "playlist" => Request::Status(Status::Playlist),
+                // "volume" => match tokens.len() {
+                //     1 => Request::Status(Status::Volume),
+                //     _ => Request::Playback(Playback::Volume(tokens[1..].try_into()?)),
+                // },
 
                 _ => bail!(MyError::Syntax("Invalid request".into())),
             },
