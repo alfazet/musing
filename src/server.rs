@@ -96,8 +96,6 @@ impl Server {
                 }
             });
         }
-
-        Ok(())
     }
 }
 
@@ -110,10 +108,10 @@ pub async fn run(config: Config) -> Result<()> {
     let (tx_shutdown, rx_shutdown) = broadcast::channel(1);
     let server = Server::new(server_config);
     let player_task = tokio::spawn(async move { player::run(player_config, rx).await });
-    let res = server.run(tx, tx_shutdown).await;
-    if let Err(e) = player_task.await? {
-        log::error!("{}", e);
-    }
+    let res = tokio::select! {
+        res = server.run(tx, tx_shutdown) => res,
+        res = player_task => res?,
+    };
 
     res
 }

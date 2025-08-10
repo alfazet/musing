@@ -36,7 +36,6 @@ impl Sample for f64 {}
 
 // type SeekReceiver = mpsc::UnboundedReceiver<i32>;
 type SenderSongOver = mpsc::Sender<()>;
-type ReceiverSamples = crossbeam_channel::Receiver<Vec<f32>>;
 
 #[derive(Debug, Default)]
 enum PlaybackState {
@@ -48,8 +47,7 @@ enum PlaybackState {
 
 #[derive(Clone)]
 struct StreamData {
-    audio_meta: AudioMeta,
-    rx_samples: ReceiverSamples,
+    song: PlayerSong,
     tx_over: SenderSongOver,
     volume: Arc<RwLock<f32>>,
     elapsed: Arc<RwLock<u64>>,
@@ -62,6 +60,7 @@ struct AudioDevice {
     enabled: bool,
 }
 
+#[derive(Default)]
 pub struct Audio {
     playback_state: PlaybackState,
     stream_data: Option<StreamData>,
@@ -94,8 +93,7 @@ impl AudioDevice {
         T: Sample,
     {
         let StreamData {
-            audio_meta,
-            rx_samples,
+            song,
             tx_over,
             volume,
             elapsed,
@@ -103,7 +101,7 @@ impl AudioDevice {
 
         let transform_samples = move |samples: &[f32]| -> Vec<T> {
             let volume = { *volume.read().unwrap() };
-            samples.into_iter().map(|s| T::from_sample(*s)).collect()
+            samples.iter().map(|s| T::from_sample(*s)).collect()
         };
 
         let mut samples = Vec::new();
@@ -112,7 +110,10 @@ impl AudioDevice {
             target_sample += data.len();
             // TODO: seek
             loop {
-                match rx_samples.recv_timeout(Duration::from_millis(UNDERRUN_THRESHOLD)) {
+                match song
+                    .rx_samples
+                    .recv_timeout(Duration::from_millis(UNDERRUN_THRESHOLD))
+                {
                     Ok(new_samples) => {
                         samples.extend(new_samples);
                         if samples.len() >= target_sample {
@@ -145,7 +146,7 @@ impl AudioDevice {
     }
 
     fn build_cpal_stream(&self, stream_data: StreamData) -> Result<CpalStream> {
-        let audio_meta = stream_data.audio_meta;
+        let audio_meta = stream_data.song.audio_meta;
         let default_n_channels = self.stream_config.channels();
         let default_sample_rate = self.stream_config.sample_rate().0;
         let sample_format = self.stream_config.sample_format();
@@ -235,16 +236,6 @@ impl AudioDevice {
     }
 }
 
-impl Default for Audio {
-    fn default() -> Self {
-        Self {
-            playback_state: PlaybackState::default(),
-            devices: HashMap::new(),
-            stream_data: None,
-        }
-    }
-}
-
 impl Audio {
     pub fn new() -> Self {
         Self::default()
@@ -266,7 +257,7 @@ impl Audio {
     }
 
     pub fn enable_device(&mut self, device_name: &str) -> Result<()> {
-        if let Some(mut device) = self.devices.get_mut(device_name) {
+        if let Some(device) = self.devices.get_mut(device_name) {
             device.enable(self.stream_data.clone())?;
         }
 
@@ -274,13 +265,13 @@ impl Audio {
     }
 
     pub fn disable_device(&mut self, device_name: &str) {
-        if let Some(mut device) = self.devices.get_mut(device_name) {
+        if let Some(device) = self.devices.get_mut(device_name) {
             device.disable();
         }
     }
 
     pub fn toggle_device(&mut self, device_name: &str) -> Result<()> {
-        if let Some(mut device) = self.devices.get_mut(device_name) {
+        if let Some(device) = self.devices.get_mut(device_name) {
             if device.enabled {
                 device.disable();
             } else {
@@ -292,19 +283,14 @@ impl Audio {
     }
 
     // TODO: seek
-    pub fn start(&mut self, song: &Song, tx_over: SenderSongOver) -> Result<()> {
-        let audio_meta = song.audio_meta;
-        let (tx_samples, rx_samples) = crossbeam_channel::bounded(1);
-        song.spawn_sample_producer(tx_samples)?;
-
+    pub fn start(&mut self, song: PlayerSong, tx_over: SenderSongOver) -> Result<()> {
         let volume = match &self.stream_data {
             Some(stream_data) => Arc::clone(&stream_data.volume),
             None => Arc::new(RwLock::new(1.0)),
         };
         let elapsed = Arc::new(RwLock::new(0));
         let stream_data = StreamData {
-            audio_meta,
-            rx_samples,
+            song,
             tx_over,
             volume,
             elapsed,
@@ -361,9 +347,6 @@ mod audio_utils {
         let host = cpal::default_host();
         host.output_devices()?
             .find(|x| x.name().map(|s| s == device_name).unwrap_or(false))
-            .ok_or(anyhow!(MyError::Audio(format!(
-                "Audio device `{}` unavailable",
-                device_name
-            ))))
+            .ok_or(MyError::Audio(format!("Audio device `{}` unavailable", device_name)).into())
     }
 }

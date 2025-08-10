@@ -12,11 +12,6 @@ type RespondTo = oneshot::Sender<Response>;
 pub struct SelectArgs(pub FilterExpr, pub Vec<Comparator>);
 pub struct MetadataArgs(pub Vec<u32>, pub Vec<TagKey>);
 pub struct UniqueArgs(pub TagKey, pub Vec<TagKey>, pub FilterExpr);
-pub struct AddArgs(pub Vec<u32>, pub Option<usize>); // db ids
-pub struct PlayArgs(pub u32); // queue id
-pub struct VolumeChangeArgs(pub i32); // in range 0..=100
-pub struct SeekArgs(pub i32); // in seconds
-
 pub enum DbRequestKind {
     Update,
     Select(SelectArgs),
@@ -24,20 +19,38 @@ pub enum DbRequestKind {
     Unique(UniqueArgs),
 }
 
-pub enum RequestKind {
-    Db(DbRequestKind),
-
+pub struct SeekArgs(pub i32); // in seconds
+pub struct VolumeArgs(pub i32); // in range 0..=100
+pub enum PlaybackRequestKind {
     Pause,
     Resume,
     Toggle,
     Stop,
+    Seek(SeekArgs),
+    Volume(VolumeArgs),
+}
 
+pub struct AddArgs(pub Vec<u32>, pub Option<usize>); // db ids
+pub struct PlayArgs(pub u32); // queue id
+pub enum QueueRequestKind {
     Clear,
     Add(AddArgs),
     Play(PlayArgs),
+    Next,
+    Previous,
+}
 
-    VolumeChange(VolumeChangeArgs),
-    Seek(SeekArgs),
+pub enum StatusRequestKind {
+    Elapsed,
+    Playlist,
+    Song,
+    Volume,
+}
+
+pub enum RequestKind {
+    Db(DbRequestKind),
+    Playback(PlaybackRequestKind),
+    Queue(QueueRequestKind),
 }
 
 pub struct Request {
@@ -153,22 +166,27 @@ impl TryFrom<&str> for RequestKind {
     type Error = anyhow::Error;
 
     fn try_from(s: &str) -> Result<Self> {
-        use DbRequestKind as DbKind;
-        use RequestKind as Kind;
+        use DbRequestKind as Db;
+        use PlaybackRequestKind as Playback;
+        use QueueRequestKind as Queue;
+        use RequestKind as Request;
 
         let tokens = request::tokenize(s)?;
-        let kind = match tokens
-            .first()
-            .map(|s| s.as_str())
-            .ok_or(MyError::Syntax("Empty request".into()))?
-        {
-            "update" => Kind::Db(DbKind::Update),
-            "select" => Kind::Db(DbKind::Select(tokens[1..].try_into()?)),
-            "metadata" => Kind::Db(DbKind::Metadata(tokens[1..].try_into()?)),
-            "unique" => Kind::Db(DbKind::Unique(tokens[1..].try_into()?)),
-            "add" => Kind::Add(tokens[1..].try_into()?),
-            "play" => Kind::Play(tokens[1..].try_into()?),
-            _ => bail!(MyError::Syntax("Invalid request".into())),
+        let kind = match tokens.first().map(|s| s.as_str()) {
+            Some(request) => match request {
+                "update" => Request::Db(Db::Update),
+                "select" => Request::Db(Db::Select(tokens[1..].try_into()?)),
+                "metadata" => Request::Db(Db::Metadata(tokens[1..].try_into()?)),
+                "unique" => Request::Db(Db::Unique(tokens[1..].try_into()?)),
+
+                "add" => Request::Queue(Queue::Add(tokens[1..].try_into()?)),
+                "play" => Request::Queue(Queue::Play(tokens[1..].try_into()?)),
+                "next" => Request::Queue(Queue::Next),
+                "previous" => Request::Queue(Queue::Previous),
+
+                _ => bail!(MyError::Syntax("Invalid request".into())),
+            },
+            None => bail!(MyError::Syntax("Empty request".into())),
         };
 
         Ok(kind)

@@ -1,6 +1,5 @@
 use anyhow::Result;
 use rayon::prelude::*;
-use rayon::prelude::*;
 use serde_json::{Map, Value as JsonValue};
 use std::{
     cmp::Ordering,
@@ -55,17 +54,17 @@ impl Database {
             .collect()
     }
 
-    pub fn new(music_dir: PathBuf, allowed_exts: Vec<String>) -> Self {
-        let files = utils::walk_dir(&music_dir, SystemTime::UNIX_EPOCH, &allowed_exts);
+    pub fn from_dir(music_dir: PathBuf, allowed_exts: Vec<String>) -> Result<Self> {
+        let files = utils::walk_dir(&music_dir, SystemTime::UNIX_EPOCH, &allowed_exts)?;
         let data_rows = Self::to_data_rows(&files, 0);
         let last_update = SystemTime::now();
 
-        Self {
+        Ok(Self {
             music_dir,
             allowed_exts,
             data_rows,
             last_update,
-        }
+        })
     }
 
     pub fn last_id(&self) -> u32 {
@@ -97,7 +96,11 @@ impl Database {
             }
         });
         self.data_rows.retain(|row| !row.to_delete);
-        let new_files = utils::walk_dir(&self.music_dir, self.last_update, &self.allowed_exts);
+        let new_files = match utils::walk_dir(&self.music_dir, self.last_update, &self.allowed_exts)
+        {
+            Ok(new_files) => new_files,
+            Err(e) => return Response::new_err(e.to_string()),
+        };
         let mut new_data_rows = Self::to_data_rows(
             &new_files,
             self.data_rows.last().map(|row| row.id).unwrap_or(0),

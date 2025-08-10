@@ -20,6 +20,7 @@ use tokio::{sync::mpsc, task};
 use crate::{error::MyError, model::tag_key::TagKey, utils};
 
 pub type SenderSamples = crossbeam_channel::Sender<Vec<f32>>;
+pub type ReceiverSamples = crossbeam_channel::Receiver<Vec<f32>>;
 
 const BUF_SIZE: usize = 4096;
 
@@ -29,7 +30,7 @@ pub struct SongMeta {
     // TODO: cover_art: (),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct AudioMeta {
     pub n_channels: Option<u16>,
     pub bit_depth: Option<u32>,
@@ -41,6 +42,12 @@ pub struct Song {
     pub path: PathBuf, // absolute
     pub song_meta: SongMeta,
     pub audio_meta: AudioMeta,
+}
+
+#[derive(Clone)]
+pub struct PlayerSong {
+    pub audio_meta: AudioMeta,
+    pub rx_samples: ReceiverSamples,
 }
 
 impl SongMeta {
@@ -91,7 +98,7 @@ impl TryFrom<&Path> for Song {
     type Error = anyhow::Error;
 
     fn try_from(path: &Path) -> Result<Self> {
-        let mut probe_res = get_probe_result(path)?;
+        let mut probe_res = song_utils::get_probe_result(path)?;
         let song_meta = probe_res
             .metadata
             .get()
@@ -118,9 +125,23 @@ impl TryFrom<&Path> for Song {
     }
 }
 
+impl TryFrom<&Song> for PlayerSong {
+    type Error = anyhow::Error;
+
+    fn try_from(song: &Song) -> Result<Self> {
+        let audio_meta = song.audio_meta;
+        let rx_samples = song.spawn_sample_producer()?;
+
+        Ok(Self {
+            audio_meta,
+            rx_samples,
+        })
+    }
+}
+
 impl Song {
-    pub fn spawn_sample_producer(&self, tx: SenderSamples) -> Result<()> {
-        let mut format_reader = get_probe_result(&self.path)?.format;
+    pub fn spawn_sample_producer(&self) -> Result<ReceiverSamples> {
+        let mut format_reader = song_utils::get_probe_result(&self.path)?.format;
         let track = format_reader.default_track().ok_or(MyError::File(format!(
             "No audio track found in `{}`",
             self.path.to_string_lossy()
@@ -130,6 +151,7 @@ impl Song {
             symphonia::default::get_codecs().make(&track.codec_params, &decoder_opts)?;
         let track_id = track.id;
 
+        let (tx, rx) = crossbeam_channel::bounded(1);
         tokio::task::spawn_blocking(move || {
             let mut batch = Vec::new();
             while let Ok(packet) = format_reader.next_packet() {
@@ -160,24 +182,28 @@ impl Song {
             }
         });
 
-        Ok(())
+        Ok(rx)
     }
 }
 
-fn get_probe_result(path: &Path) -> Result<ProbeResult> {
-    let file = File::open(path)?;
-    let source = Box::new(file);
-    let mss = MediaSourceStream::new(source, Default::default());
-    let format_opts: FormatOptions = Default::default();
-    let metadata_opts: MetadataOptions = Default::default();
-    let mut hint = Hint::new();
-    if let Some(ext) = path.extension() {
-        if let Some(ext) = ext.to_str() {
-            hint.with_extension(ext);
-        }
-    }
-    let probe_res =
-        symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts)?;
+mod song_utils {
+    use super::*;
 
-    Ok(probe_res)
+    pub fn get_probe_result(path: &Path) -> Result<ProbeResult> {
+        let file = File::open(path)?;
+        let source = Box::new(file);
+        let mss = MediaSourceStream::new(source, Default::default());
+        let format_opts: FormatOptions = Default::default();
+        let metadata_opts: MetadataOptions = Default::default();
+        let mut hint = Hint::new();
+        if let Some(ext) = path.extension() {
+            if let Some(ext) = ext.to_str() {
+                hint.with_extension(ext);
+            }
+        }
+        let probe_res =
+            symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts)?;
+
+        Ok(probe_res)
+    }
 }

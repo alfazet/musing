@@ -75,7 +75,7 @@ impl Queue {
         }
     }
 
-    pub fn move_next(&mut self) {
+    pub fn move_next(&mut self) -> Option<Entry> {
         match &mut self.random {
             Some(random) => {
                 // move to the next random position or None if none are left
@@ -86,28 +86,32 @@ impl Queue {
                 None if !self.list.is_empty() => self.pos = Some(0),
                 _ => self.pos = None,
             },
-        }
+        };
+
+        self.current()
     }
 
-    pub fn move_prev(&mut self) {
+    pub fn move_prev(&mut self) -> Option<Entry> {
         match &mut self.pos {
             Some(pos) if *pos > 0 => *pos -= 1,
             None if !self.list.is_empty() => self.pos = Some(self.list.len() - 1),
             _ => self.pos = None,
-        }
+        };
+
+        self.current()
     }
 
-    pub fn move_to(&mut self, id: u32) -> bool {
+    pub fn move_to(&mut self, id: u32) -> Option<Entry> {
         // to prevent repetitions
         if let Some(random) = &mut self.random {
             random.ids.retain(|random_id| *random_id != id);
-        }
-        match self.find_by_id(id) {
-            Some(pos) => {
-                self.pos = Some(pos);
-                true
-            }
-            None => false,
+        };
+
+        if let Some(pos) = self.find_by_id(id) {
+            self.pos = Some(pos);
+            self.current()
+        } else {
+            None
         }
     }
 
@@ -119,8 +123,8 @@ impl Queue {
         };
 
         match pos {
-            Some(pos) => self.list.insert(pos, entry),
-            None => self.list.push(entry),
+            Some(pos) if pos <= self.list.len() => self.list.insert(pos, entry),
+            _ => self.list.push(entry),
         }
         if let Some(random) = &mut self.random {
             // insert into a random spot in constant time
