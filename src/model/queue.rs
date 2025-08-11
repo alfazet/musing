@@ -2,9 +2,7 @@ use anyhow::Result;
 use rand::{prelude::*, seq::SliceRandom};
 use std::{collections::HashSet, mem};
 
-use crate::error::MyError;
-
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 pub struct Entry {
     pub queue_id: u32,
     pub db_id: u32,
@@ -167,6 +165,7 @@ impl Queue {
     pub fn clear(&mut self) {
         self.list.clear();
         self.history.clear();
+        let _ = self.pos.take();
         let _ = self.random.take();
     }
 

@@ -10,16 +10,13 @@ use std::{
     time::SystemTime,
 };
 
-use crate::{
-    error::MyError,
-    model::{
-        comparator::Comparator,
-        filter::FilterExpr,
-        request::{MetadataArgs, SelectArgs, UniqueArgs},
-        response::Response,
-        song::*,
-        tag_key::TagKey,
-    },
+use crate::model::{
+    comparator::Comparator,
+    filter::FilterExpr,
+    request::{MetadataArgs, SelectArgs, UniqueArgs},
+    response::Response,
+    song::*,
+    tag_key::TagKey,
 };
 
 struct DataRow {
@@ -47,21 +44,25 @@ impl Database {
                     to_delete: false,
                 }),
                 Err(e) => {
-                    log::warn!("{}", e);
+                    log::warn!(
+                        "could not read any audio from {} ({})",
+                        file.to_string_lossy(),
+                        e
+                    );
                     None
                 }
             })
             .collect()
     }
 
-    pub fn from_dir(music_dir: PathBuf, allowed_exts: Vec<String>) -> Result<Self> {
-        let files = db_utils::walk_dir(&music_dir, SystemTime::UNIX_EPOCH, &allowed_exts)?;
+    pub fn from_dir(music_dir: &Path, allowed_exts: &[String]) -> Result<Self> {
+        let files = db_utils::walk_dir(music_dir, SystemTime::UNIX_EPOCH, allowed_exts)?;
         let data_rows = Self::to_data_rows(&files, 0);
         let last_update = SystemTime::now();
 
         Ok(Self {
-            music_dir,
-            allowed_exts,
+            music_dir: music_dir.to_path_buf(),
+            allowed_exts: allowed_exts.to_vec(),
             data_rows,
             last_update,
         })
@@ -72,6 +73,16 @@ impl Database {
             .binary_search_by_key(&id, |row| row.id)
             .map(|i| &self.data_rows[i].song)
             .ok()
+    }
+
+    pub fn reset(&mut self) -> Response {
+        match Self::from_dir(&self.music_dir, &self.allowed_exts) {
+            Ok(db) => {
+                *self = db;
+                Response::new_ok()
+            }
+            Err(e) => Response::new_err(e.to_string()),
+        }
     }
 
     /// Get values of `tags` for songs with `ids`.
@@ -211,8 +222,8 @@ mod db_utils {
         let is_ok = move |path: &Path| -> bool {
             if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
                 if allowed_exts.iter().any(|allowed_ext| allowed_ext == ext) {
-                    if let Ok(mod_time) = path.metadata().and_then(|meta| meta.created()) {
-                        return mod_time >= timestamp;
+                    if let Ok(creation_time) = path.metadata().and_then(|meta| meta.created()) {
+                        return creation_time >= timestamp;
                     }
                 }
             }
@@ -222,10 +233,10 @@ mod db_utils {
 
         // TODO: ignore specified directories (like .gitignore)
         if !root_dir.exists() {
-            bail!(MyError::Database(format!(
-                "Directory `{}` doesn't exist",
+            bail!(format!(
+                "directory `{}` doesn't exist",
                 root_dir.to_string_lossy()
-            )));
+            ));
         }
         let list = WalkDir::new(root_dir)
             .into_iter()

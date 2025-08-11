@@ -4,7 +4,7 @@ use std::{
     str::{self, FromStr},
 };
 
-use crate::{error::MyError, model::filter::*};
+use crate::model::filter::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Operator(u8);
@@ -44,8 +44,8 @@ fn tokenize_filter(s: &mut Peekable<str::Chars>) -> Result<FilterArgs> {
                     tag.push(c);
                     State::Tag
                 }
-                None => bail!(MyError::Syntax("Incomplete filter".into())),
-                _ => bail!(MyError::Syntax("Tag must be alphanumeric".into())),
+                None => bail!("incomplete filter"),
+                _ => bail!("tag must be alphanumeric"),
             },
             State::Tag => match c {
                 Some(c) if c.is_alphanumeric() => {
@@ -56,16 +56,16 @@ fn tokenize_filter(s: &mut Peekable<str::Chars>) -> Result<FilterArgs> {
                     comparator.push(c);
                     State::Comparator
                 }
-                None => bail!(MyError::Syntax("Incomplete filter".into())),
-                _ => bail!(MyError::Syntax("Tag must be alphanumeric".into())),
+                None => bail!("incomplete filter"),
+                _ => bail!("tag must be alphanumeric"),
             },
             State::Comparator => match c {
                 Some(c @ '=') => {
                     comparator.push(c);
                     State::Pattern
                 }
-                None => bail!(MyError::Syntax("Incomplete filter".into())),
-                _ => bail!(MyError::Syntax("Invalid comparator".into())),
+                None => bail!("incomplete filter"),
+                _ => bail!("invalid comparator"),
             },
             State::Pattern => match c {
                 Some('\"') => State::PatternQuoted,
@@ -84,7 +84,7 @@ fn tokenize_filter(s: &mut Peekable<str::Chars>) -> Result<FilterArgs> {
                 }
             },
             State::PatternQuoted => match c {
-                None => bail!(MyError::Syntax("Unclosed double quote".into())),
+                None => bail!("unclosed double quote"),
                 Some('\\') => State::PatternQuotedBackslash,
                 Some('\"') => break,
                 Some(c) => {
@@ -93,7 +93,7 @@ fn tokenize_filter(s: &mut Peekable<str::Chars>) -> Result<FilterArgs> {
                 }
             },
             State::PatternQuotedBackslash => match c {
-                None => bail!(MyError::Syntax("Unclosed double quote".into())),
+                None => bail!("unclosed double quote"),
                 Some('\n') => State::PatternQuoted,
                 Some(c @ '\"') | Some(c @ '\\') => {
                     pattern.push(c);
@@ -160,7 +160,7 @@ pub fn into_rpn(infix: Vec<Token>) -> Result<Vec<Token>> {
                         break;
                     }
                     Some(_) => rpn.push(op_stack.pop().unwrap()),
-                    None => bail!(MyError::Syntax("Mismatched parentheses".into())),
+                    None => bail!("mismatched parentheses"),
                 }
             },
         }
@@ -168,7 +168,7 @@ pub fn into_rpn(infix: Vec<Token>) -> Result<Vec<Token>> {
     while let Some(operator) = op_stack.pop() {
         match operator {
             Token::OpeningParen | Token::ClosingParen => {
-                bail!(MyError::Syntax("Mismatched parentheses".into()))
+                bail!("mismatched parentheses")
             }
             _ => rpn.push(operator),
         }
@@ -182,9 +182,9 @@ pub fn token_to_symbol(token: Token) -> Result<FilterExprSymbol> {
         Token::Operator(op) => match op {
             OP_AND => Ok(FilterExprSymbol::Operator(FilterExprOperator::OpAnd)),
             OP_OR => Ok(FilterExprSymbol::Operator(FilterExprOperator::OpOr)),
-            _ => bail!(MyError::Syntax("Invalid operator".into())),
+            _ => bail!("invalid operator"),
         },
         Token::Filter(args) => Ok(FilterExprSymbol::try_from(args)?),
-        _ => bail!(MyError::Syntax("Invalid operator".into())),
+        _ => bail!("invalid operator"),
     }
 }

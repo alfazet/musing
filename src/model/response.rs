@@ -3,8 +3,6 @@ use erased_serde::Serialize as ErasedSerialize;
 use serde_json::{self, Map, Value as JsonValue};
 use std::fmt::{self, Display, Formatter};
 
-use crate::error::MyError;
-
 enum ResponseKind {
     Ok,
     Err(String),
@@ -23,8 +21,8 @@ pub struct Response {
 impl Display for ResponseKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let s = match self {
-            ResponseKind::Ok => String::from("OK"),
-            ResponseKind::Err(_) => String::from("ERR"),
+            ResponseKind::Ok => String::from("ok"),
+            ResponseKind::Err(_) => String::from("err"),
         };
 
         write!(f, "{}", s)

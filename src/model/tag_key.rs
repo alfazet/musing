@@ -7,8 +7,6 @@ use std::{
 };
 use symphonia::core::meta::StandardTagKey;
 
-use crate::error::MyError;
-
 macro_rules! enum_stringify {
     ($variant:expr) => {{
         let s = format!("{:?}", $variant);
@@ -117,7 +115,7 @@ impl TryFrom<&str> for TagKey {
         use StandardTagKey as STKey;
 
         let Some(key) = TAG_MAP.get(&s).cloned() else {
-            bail!(MyError::Syntax("Invalid tag name".into()));
+            bail!("invalid tag name");
         };
         let kind = match key {
             STKey::Bpm => TagKeyKind::Integer,

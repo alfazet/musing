@@ -1,8 +1,6 @@
 use anyhow::{Result, anyhow, bail};
 use std::mem;
 
-use crate::error::MyError;
-
 // based on https://github.com/tmiasko/shell-words/
 // modified to include square brackets as a "verbatim" delimiter
 #[derive(Debug)]
@@ -80,7 +78,7 @@ pub fn tokenize(s: &str) -> Result<Vec<String>> {
                 }
             },
             State::SingleQuoted => match c {
-                None => bail!(MyError::Syntax("Unclosed single quote".into())),
+                None => bail!("unclosed single quote"),
                 Some('\'') => State::Unquoted,
                 Some(c) => {
                     cur.push(c);
@@ -88,7 +86,7 @@ pub fn tokenize(s: &str) -> Result<Vec<String>> {
                 }
             },
             State::DoubleQuoted => match c {
-                None => bail!(MyError::Syntax("Unclosed double quote".into())),
+                None => bail!("unclosed double quote"),
                 Some('\"') => State::Unquoted,
                 Some('\\') => State::DoubleQuotedBackslash,
                 Some(c) => {
@@ -97,7 +95,7 @@ pub fn tokenize(s: &str) -> Result<Vec<String>> {
                 }
             },
             State::DoubleQuotedBackslash => match c {
-                None => bail!(MyError::Syntax("Unclosed double quote".into())),
+                None => bail!("unclosed double quote"),
                 Some('\n') => State::DoubleQuoted,
                 Some(c @ '$') | Some(c @ '`') | Some(c @ '"') | Some(c @ '\\') => {
                     cur.push(c);
@@ -110,7 +108,7 @@ pub fn tokenize(s: &str) -> Result<Vec<String>> {
                 }
             },
             State::SquareBracket => match c {
-                None => bail!(MyError::Syntax("Unclosed square bracket".into())),
+                None => bail!("unclosed square bracket"),
                 Some(']') => State::Unquoted,
                 Some('\\') => State::SquareBracketBackslash,
                 Some(c) => {
@@ -119,7 +117,7 @@ pub fn tokenize(s: &str) -> Result<Vec<String>> {
                 }
             },
             State::SquareBracketBackslash => match c {
-                None => bail!(MyError::Syntax("Unclosed square bracket".into())),
+                None => bail!("unclosed square bracket"),
                 Some(c @ ']') | Some(c @ '\\') => {
                     cur.push(c);
                     State::SquareBracket

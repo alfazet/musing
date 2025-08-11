@@ -19,7 +19,7 @@ use tokio::{
     task::{self, JoinHandle},
 };
 
-use crate::{error::MyError, model::song::*};
+use crate::model::song::*;
 
 const UNDERRUN_THRESHOLD: u64 = 250;
 
@@ -173,7 +173,7 @@ impl AudioDevice {
                 Ok(self.cpal_device.build_output_stream(
                     &stream_config,
                     self.create_data_callback::<$type>(stream_data, time_base)?,
-                    |e| log::error!("{}", e),
+                    |e| log::error!("playback error ({})", e),
                     None,
                 )?)
             };
@@ -189,10 +189,7 @@ impl AudioDevice {
             U32 => build_output_stream!(u32),
             F32 => build_output_stream!(f32),
             F64 => build_output_stream!(f64),
-            x => bail!(MyError::Audio(format!(
-                "Sample format {:?} is not supported",
-                x
-            ))),
+            x => bail!(format!("sample format {:?} is not supported", x)),
         }
     }
 
@@ -377,7 +374,7 @@ impl Audio {
             // PlayerSong should also contain an Option<Duration>
             // to prevent this (and to show song durations to the client)
             if secs > 0 {
-                *stream_data.elapsed.write().unwrap() += (secs as u64);
+                *stream_data.elapsed.write().unwrap() += secs as u64;
             } else if secs < 0 {
                 let cur_elapsed = { *stream_data.elapsed.read().unwrap() };
                 let new_elapsed = cur_elapsed.saturating_sub(secs.unsigned_abs() as u64);
@@ -437,7 +434,7 @@ mod audio_utils {
         let host = cpal::default_host();
         host.output_devices()?
             .find(|x| x.name().map(|s| s == device_name).unwrap_or(false))
-            .ok_or(MyError::Audio(format!("Audio device `{}` unavailable", device_name)).into())
+            .ok_or(anyhow!("audio device `{}` unavailable", device_name))
     }
 
     // non-linear volume slider

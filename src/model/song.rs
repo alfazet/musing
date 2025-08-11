@@ -17,7 +17,7 @@ use symphonia::core::{
 };
 use tokio::{sync::mpsc, task};
 
-use crate::{error::MyError, model::tag_key::TagKey};
+use crate::model::tag_key::TagKey;
 
 pub type SenderSamples = crossbeam_channel::Sender<Vec<f32>>;
 pub type ReceiverSamples = crossbeam_channel::Receiver<Vec<f32>>;
@@ -110,10 +110,10 @@ impl TryFrom<&Path> for Song {
             })
             .unwrap_or_default();
         let format_reader = probe_res.format;
-        let track = format_reader.default_track().ok_or(MyError::File(format!(
-            "No audio track found in `{}`",
+        let track = format_reader.default_track().ok_or(anyhow!(
+            "no audio track found in `{}`",
             path.to_string_lossy()
-        )))?;
+        ))?;
         let audio_meta = AudioMeta::from_track(track);
         let song = Self {
             path: path.to_path_buf(),
@@ -142,10 +142,10 @@ impl TryFrom<&Song> for PlayerSong {
 impl Song {
     pub fn spawn_sample_producer(&self) -> Result<ReceiverSamples> {
         let mut format_reader = song_utils::get_probe_result(&self.path)?.format;
-        let track = format_reader.default_track().ok_or(MyError::File(format!(
-            "No audio track found in `{}`",
+        let track = format_reader.default_track().ok_or(anyhow!(
+            "no audio track found in `{}`",
             self.path.to_string_lossy()
-        )))?;
+        ))?;
         let decoder_opts: DecoderOptions = Default::default();
         let mut decoder =
             symphonia::default::get_codecs().make(&track.codec_params, &decoder_opts)?;
@@ -174,7 +174,7 @@ impl Song {
                             }
                         }
                     }
-                    Err(e) => log::warn!("{}", e),
+                    Err(e) => log::warn!("decoding error ({})", e),
                 }
             }
             if !batch.is_empty() {

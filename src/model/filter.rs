@@ -3,7 +3,6 @@ use regex::Regex;
 use std::fmt::{self, Display, Formatter};
 
 use crate::{
-    error::MyError,
     model::{song::*, tag_key::TagKey},
     parsers::filter as parser,
 };
@@ -76,7 +75,7 @@ impl TryFrom<FilterArgs> for FilterExprSymbol {
         let boxed_filter = match comparator.as_str() {
             "==" => Box::new(RegexFilter::new(tag_key, regex, false)),
             "!=" => Box::new(RegexFilter::new(tag_key, regex, true)),
-            _ => bail!(MyError::Syntax("Invalid comparator".into())),
+            _ => bail!("invalid comparator"),
         };
 
         Ok(Self::Filter(boxed_filter))
@@ -102,7 +101,7 @@ impl TryFrom<Vec<FilterExprSymbol>> for FilterExpr {
             match symbol {
                 FESymbol::Operator(op) => {
                     if stack_size < 2 {
-                        bail!(MyError::Syntax("Invalid filter expression".into()));
+                        bail!("invalid filter expression");
                     }
                     stack_size -= 1;
                 }
@@ -112,7 +111,7 @@ impl TryFrom<Vec<FilterExprSymbol>> for FilterExpr {
         if stack_size == 1 {
             Ok(Self { symbols })
         } else {
-            bail!(MyError::Syntax("Invalid filter expression".into()));
+            bail!("invalid filter expression");
         }
     }
 }

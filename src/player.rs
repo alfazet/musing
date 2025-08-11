@@ -11,7 +11,6 @@ use crate::{
     audio::Audio,
     config::PlayerConfig,
     database::Database,
-    error::MyError,
     model::{
         queue::Queue,
         request::*,
@@ -33,10 +32,10 @@ struct Player {
 impl Player {
     fn song_by_db_id(&self, db_id: u32) -> Result<&Song> {
         let Some(song) = self.database.song_by_id(db_id) else {
-            bail!(MyError::Database(format!(
-                "Song with db_id `{}` not found in the database",
+            bail!(format!(
+                "song with db_id `{}` not found in the database",
                 db_id
-            )));
+            ));
         };
 
         Ok(song)
@@ -52,6 +51,24 @@ impl Player {
         Ok(())
     }
 
+    fn move_next_until_ok(&mut self) {
+        while let Some(entry) = self.queue.move_next() {
+            match self.play(entry.db_id) {
+                Ok(_) => break,
+                Err(e) => log::error!("playback error ({})", e),
+            }
+        }
+    }
+
+    fn move_prev_until_ok(&mut self) {
+        while let Some(entry) = self.queue.move_prev() {
+            match self.play(entry.db_id) {
+                Ok(_) => break,
+                Err(e) => log::error!("playback error ({})", e),
+            }
+        }
+    }
+
     // database requests are blocking and (mostly) parallelizable,
     // so we send them to rayon's thread pool
     async fn db_request(&mut self, req: DbRequestKind) -> Response {
@@ -59,10 +76,14 @@ impl Player {
         rayon::scope(|s| {
             s.spawn(|_| {
                 let response = match req {
-                    DbRequestKind::Update => self.database.update(),
-                    DbRequestKind::Select(args) => self.database.select_outer(args),
                     DbRequestKind::Metadata(args) => self.database.metadata(args),
+                    DbRequestKind::Reset => {
+                        self.queue.clear();
+                        self.database.reset()
+                    }
+                    DbRequestKind::Select(args) => self.database.select_outer(args),
                     DbRequestKind::Unique(args) => self.database.unique(args),
+                    DbRequestKind::Update => self.database.update(),
                 };
                 let _ = tx.send(response);
             });
@@ -95,7 +116,6 @@ impl Player {
 
                 Response::new_ok()
             }
-            _ => todo!(),
         }
     }
 
@@ -115,25 +135,52 @@ impl Player {
 
                 Response::new_ok()
             }
+            QueueRequestKind::Clear => {
+                self.queue.clear();
+                Response::new_ok()
+            }
+            QueueRequestKind::Next => {
+                self.move_next_until_ok();
+                if self.queue.current().is_none() {
+                    self.queue.reset_pos();
+                    let _ = self.audio.stop();
+                }
+
+                Response::new_ok()
+            }
             QueueRequestKind::Play(args) => {
                 let PlayArgs(queue_id) = args;
                 match self.queue.move_to(queue_id) {
                     Some(entry) => self.play(entry.db_id).into(),
                     None => Response::new_err(format!(
-                        "Song with queue_id `{}` not found in the queue",
+                        "song with queue_id `{}` not found in the queue",
                         queue_id
                     )),
                 }
             }
-            QueueRequestKind::Next => match self.queue.move_next() {
-                Some(entry) => self.play(entry.db_id).into(),
-                None => self.audio.stop().into(),
-            },
-            QueueRequestKind::Previous => match self.queue.move_prev() {
-                Some(entry) => self.play(entry.db_id).into(),
-                None => self.audio.stop().into(),
-            },
-            _ => todo!(),
+            QueueRequestKind::Previous => {
+                self.move_prev_until_ok();
+                if self.queue.current().is_none() {
+                    self.queue.reset_pos();
+                    let _ = self.audio.stop();
+                }
+
+                Response::new_ok()
+            }
+            QueueRequestKind::Remove(args) => {
+                let RemoveArgs(queue_id) = args;
+                match self.queue.remove(queue_id) {
+                    Some(true) => {
+                        self.queue.reset_pos();
+                        self.audio.stop().into()
+                    }
+                    Some(false) => Response::new_ok(),
+                    None => Response::new_err(format!(
+                        "song with queue_id `{}` not found in the queue",
+                        queue_id
+                    )),
+                }
+            }
         }
     }
 
@@ -143,15 +190,17 @@ impl Player {
                 Some(entry) => Response::new_ok()
                     .with_item("db_id".into(), &entry.db_id)
                     .with_item("queue_id".into(), &entry.queue_id),
-                None => Response::new_err("No song is playing right now".into()),
+                None => Response::new_err("no song is playing right now".into()),
             },
             StatusRequestKind::Elapsed => {
                 Response::new_ok().with_item("elapsed".into(), &self.audio.elapsed())
             }
+            StatusRequestKind::Queue => {
+                Response::new_ok().with_item("queue".into(), &self.queue.as_inner())
+            }
             StatusRequestKind::Volume => {
                 Response::new_ok().with_item("volume".into(), &self.audio.volume())
             }
-            _ => todo!(),
         }
     }
 
@@ -187,14 +236,10 @@ impl Player {
                     None => break,
                 },
                 Some(_) = self.rx_over.recv() => {
-                    match self.queue.move_next() {
-                        Some(entry) => {
-                            let _ = self.play(entry.db_id);
-                        }
-                        None => {
-                            self.queue.reset_pos();
-                            let _ = self.audio.stop();
-                        }
+                    self.move_next_until_ok();
+                    if self.queue.current().is_none() {
+                        self.queue.reset_pos();
+                        let _ = self.audio.stop();
                     }
                 },
                 else => break
@@ -213,7 +258,7 @@ pub async fn run(player_config: PlayerConfig, rx: ReceiverFromServer) -> Result<
     let database = {
         let (tx, rx) = oneshot::channel();
         rayon::spawn(move || {
-            let _ = tx.send(Database::from_dir(music_dir, allowed_exts));
+            let _ = tx.send(Database::from_dir(&music_dir, &allowed_exts));
         });
         rx.await?
     }?;

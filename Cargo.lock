@@ -919,6 +919,7 @@ dependencies = [
  "rand",
  "rayon",
  "regex",
+ "serde",
  "serde_json",
  "simple-logging",
  "symphonia",

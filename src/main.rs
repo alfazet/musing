@@ -6,7 +6,6 @@ mod audio;
 mod config;
 mod constants;
 mod database;
-mod error;
 mod player;
 mod server;
 
@@ -34,7 +33,7 @@ async fn main() {
     {
         Ok(config) => config,
         Err(e) => {
-            log::error!("{}", e);
+            log::error!("config error ({})", e);
             return;
         }
     };
@@ -44,6 +43,6 @@ async fn main() {
         res = server::run(config) => res,
     };
     if let Err(e) = res {
-        log::error!("{}", e);
+        log::error!("fatal error ({})", e);
     }
 }

@@ -1,8 +1,7 @@
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use tokio::sync::{mpsc::Sender, oneshot};
 
 use crate::{
-    error::MyError,
     model::{comparator::Comparator, filter::FilterExpr, response::Response, tag_key::TagKey},
     parsers::request,
 };
@@ -19,6 +18,7 @@ pub struct SelectArgs(pub FilterExpr, pub Vec<Comparator>);
 pub struct UniqueArgs(pub TagKey, pub Vec<TagKey>, pub FilterExpr);
 pub enum DbRequestKind {
     Metadata(MetadataArgs),
+    Reset,
     Select(SelectArgs),
     Unique(UniqueArgs),
     Update,
@@ -37,18 +37,20 @@ pub enum PlaybackRequestKind {
 
 pub struct AddArgs(pub Vec<u32>, pub Option<usize>); // db ids
 pub struct PlayArgs(pub u32); // queue id
+pub struct RemoveArgs(pub u32); // queue id
 pub enum QueueRequestKind {
     Add(AddArgs),
     Clear,
     Next,
     Play(PlayArgs),
     Previous,
+    Remove(RemoveArgs),
 }
 
 pub enum StatusRequestKind {
     Current,
     Elapsed,
-    Playlist,
+    Queue,
     Volume,
 }
 
@@ -69,7 +71,7 @@ impl TryFrom<&[String]> for MetadataArgs {
 
     fn try_from(args: &[String]) -> Result<Self> {
         if args.len() != 2 {
-            bail!(MyError::Syntax("Invalid arguments to `metadata`".into()));
+            bail!("invalid arguments to `metadata`");
         }
         let ids = args[0]
             .trim_end_matches(',')
@@ -113,13 +115,13 @@ impl TryFrom<&[String]> for UniqueArgs {
 
     fn try_from(args: &[String]) -> Result<Self> {
         if args.is_empty() {
-            bail!(MyError::Syntax("Invalid arguments to `unique`".into()));
+            bail!("invalid arguments to `unique`");
         }
         let tag = TagKey::try_from(args[0].as_str())?;
         let group_by = match args.get(1).map(|s| s.as_str()) {
             Some("groupby") => args
                 .get(2)
-                .ok_or(MyError::Syntax("No tags provided to `groupby`".into()))?
+                .ok_or(anyhow!("no tags provided to `groupby`"))?
                 .trim_end_matches(',')
                 .split(',')
                 .map(TagKey::try_from)
@@ -142,7 +144,7 @@ impl TryFrom<&[String]> for SeekArgs {
 
     fn try_from(args: &[String]) -> Result<Self> {
         if args.is_empty() {
-            bail!(MyError::Syntax("Invalid arguments to `seek`".into()));
+            bail!("invalid arguments to `seek`");
         }
         let secs = args[0].parse::<i32>()?;
 
@@ -180,7 +182,7 @@ impl TryFrom<&[String]> for AddArgs {
 
     fn try_from(args: &[String]) -> Result<Self> {
         if args.is_empty() {
-            bail!(MyError::Syntax("Invalid arguments to `add`".into()));
+            bail!("invalid arguments to `add`");
         }
         let ids = args[0]
             .trim_end_matches(',')
@@ -198,7 +200,20 @@ impl TryFrom<&[String]> for PlayArgs {
 
     fn try_from(args: &[String]) -> Result<Self> {
         if args.is_empty() {
-            bail!(MyError::Syntax("Invalid arguments to `play`".into()));
+            bail!("invalid arguments to `play`");
+        }
+        let id = args[0].parse::<u32>()?;
+
+        Ok(Self(id))
+    }
+}
+
+impl TryFrom<&[String]> for RemoveArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &[String]) -> Result<Self> {
+        if args.is_empty() {
+            bail!("invalid arguments to `remove`");
         }
         let id = args[0].parse::<u32>()?;
 
@@ -219,10 +234,11 @@ impl TryFrom<&str> for RequestKind {
         let tokens = request::tokenize(s)?;
         let kind = match tokens.first().map(|s| s.as_str()) {
             Some(request) => match request {
-                "update" => Request::Db(Db::Update),
-                "select" => Request::Db(Db::Select(tokens[1..].try_into()?)),
                 "metadata" => Request::Db(Db::Metadata(tokens[1..].try_into()?)),
+                "reset" => Request::Db(Db::Reset),
+                "select" => Request::Db(Db::Select(tokens[1..].try_into()?)),
                 "unique" => Request::Db(Db::Unique(tokens[1..].try_into()?)),
+                "update" => Request::Db(Db::Update),
 
                 "pause" => Request::Playback(Playback::Pause),
                 "resume" => Request::Playback(Playback::Resume),
@@ -231,21 +247,23 @@ impl TryFrom<&str> for RequestKind {
                 "toggle" => Request::Playback(Playback::Toggle),
 
                 "add" => Request::Queue(Queue::Add(tokens[1..].try_into()?)),
-                "play" => Request::Queue(Queue::Play(tokens[1..].try_into()?)),
+                "clear" => Request::Queue(Queue::Clear),
                 "next" => Request::Queue(Queue::Next),
+                "play" => Request::Queue(Queue::Play(tokens[1..].try_into()?)),
                 "previous" => Request::Queue(Queue::Previous),
+                "remove" => Request::Queue(Queue::Remove(tokens[1..].try_into()?)),
 
                 "current" => Request::Status(Status::Current),
                 "elapsed" => Request::Status(Status::Elapsed),
-                "playlist" => Request::Status(Status::Playlist),
+                "queue" => Request::Status(Status::Queue),
                 "volume" => match tokens.len() {
                     1 => Request::Status(Status::Volume),
                     _ => Request::Playback(Playback::Volume(tokens[1..].try_into()?)),
                 },
 
-                _ => bail!(MyError::Syntax("Invalid request".into())),
+                _ => bail!("invalid request"),
             },
-            None => bail!(MyError::Syntax("Empty request".into())),
+            None => bail!("empty request"),
         };
 
         Ok(kind)
