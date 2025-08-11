@@ -37,7 +37,7 @@ pub enum PlaybackRequestKind {
 
 pub struct AddArgs(pub Vec<u32>, pub Option<usize>); // db ids
 pub struct PlayArgs(pub u32); // queue id
-pub struct RemoveArgs(pub u32); // queue id
+pub struct RemoveArgs(pub Vec<u32>); // queue ids
 pub enum QueueRequestKind {
     Add(AddArgs),
     Clear,
@@ -215,9 +215,13 @@ impl TryFrom<&[String]> for RemoveArgs {
         if args.is_empty() {
             bail!("invalid arguments to `remove`");
         }
-        let id = args[0].parse::<u32>()?;
+        let ids = args[0]
+            .trim_end_matches(',')
+            .split(',')
+            .map(|s| s.parse::<u32>().map_err(|e| e.into()))
+            .collect::<Result<Vec<u32>>>()?;
 
-        Ok(Self(id))
+        Ok(Self(ids))
     }
 }
 

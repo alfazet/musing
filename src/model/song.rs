@@ -22,7 +22,7 @@ use crate::model::tag_key::TagKey;
 pub type SenderSamples = crossbeam_channel::Sender<Vec<f32>>;
 pub type ReceiverSamples = crossbeam_channel::Receiver<Vec<f32>>;
 
-const BUF_SIZE: usize = 1024;
+const BUF_SIZE: usize = 512;
 
 #[derive(Default)]
 pub struct SongMeta {

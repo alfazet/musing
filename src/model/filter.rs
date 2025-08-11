@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow, bail};
 use regex::Regex;
 use std::fmt::{self, Display, Formatter};
+use unidecode::unidecode;
 
 use crate::{
     model::{song::*, tag_key::TagKey},
@@ -42,7 +43,7 @@ impl Filter for RegexFilter {
     fn matches(&self, song: &Song) -> bool {
         match song.song_meta.get(&self.tag) {
             Some(value) => {
-                let v = self.regex.is_match(value);
+                let v = self.regex.is_match(&unidecode(value));
                 if self.inverted { !v } else { v }
             }
             None => false,

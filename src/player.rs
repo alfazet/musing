@@ -79,6 +79,7 @@ impl Player {
                     DbRequestKind::Metadata(args) => self.database.metadata(args),
                     DbRequestKind::Reset => {
                         self.queue.clear();
+                        let _ = self.audio.stop();
                         self.database.reset()
                     }
                     DbRequestKind::Select(args) => self.database.select_outer(args),
@@ -137,7 +138,7 @@ impl Player {
             }
             QueueRequestKind::Clear => {
                 self.queue.clear();
-                Response::new_ok()
+                self.audio.stop().into()
             }
             QueueRequestKind::Next => {
                 self.move_next_until_ok();
@@ -168,18 +169,24 @@ impl Player {
                 Response::new_ok()
             }
             QueueRequestKind::Remove(args) => {
-                let RemoveArgs(queue_id) = args;
-                match self.queue.remove(queue_id) {
-                    Some(true) => {
-                        self.queue.reset_pos();
-                        self.audio.stop().into()
+                let RemoveArgs(queue_ids) = args;
+                for queue_id in queue_ids {
+                    match self.queue.remove(queue_id) {
+                        Some(true) => {
+                            self.queue.reset_pos();
+                            self.audio.stop();
+                        }
+                        None => {
+                            return Response::new_err(format!(
+                                "song with queue_id `{}` not found in the queue",
+                                queue_id
+                            ));
+                        }
+                        _ => (),
                     }
-                    Some(false) => Response::new_ok(),
-                    None => Response::new_err(format!(
-                        "song with queue_id `{}` not found in the queue",
-                        queue_id
-                    )),
                 }
+
+                Response::new_ok()
             }
         }
     }
@@ -187,9 +194,7 @@ impl Player {
     fn status_request(&self, req: StatusRequestKind) -> Response {
         match req {
             StatusRequestKind::Current => match self.queue.current() {
-                Some(entry) => Response::new_ok()
-                    .with_item("db_id".into(), &entry.db_id)
-                    .with_item("queue_id".into(), &entry.queue_id),
+                Some(entry) => Response::new_ok().with_item("current".into(), &entry),
                 None => Response::new_err("no song is playing right now".into()),
             },
             StatusRequestKind::Elapsed => {

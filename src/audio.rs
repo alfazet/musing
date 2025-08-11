@@ -21,7 +21,8 @@ use tokio::{
 
 use crate::model::song::*;
 
-const UNDERRUN_THRESHOLD: u64 = 250;
+// after how many ms should we give up waiting for samples and write silence
+const UNDERRUN_THRESHOLD: u64 = 50;
 
 trait Sample: FromSample<f32> + SizedSample + Send + 'static {}
 
