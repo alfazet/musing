@@ -185,10 +185,10 @@ impl Database {
                 .metadata()
                 .and_then(|metadata| metadata.modified())
             {
-                if mod_time >= self.last_update {
-                    if let Ok(song) = Song::try_from(row.song.path.as_path()) {
-                        row.song = song;
-                    }
+                if mod_time >= self.last_update
+                    && let Ok(song) = Song::try_from(row.song.path.as_path())
+                {
+                    row.song = song;
                 }
             } else {
                 row.to_delete = true;
@@ -220,12 +220,11 @@ mod db_utils {
         allowed_exts: &[String],
     ) -> Result<Vec<PathBuf>> {
         let is_ok = move |path: &Path| -> bool {
-            if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
-                if allowed_exts.iter().any(|allowed_ext| allowed_ext == ext) {
-                    if let Ok(creation_time) = path.metadata().and_then(|meta| meta.created()) {
-                        return creation_time >= timestamp;
-                    }
-                }
+            if let Some(ext) = path.extension().and_then(|ext| ext.to_str())
+                && allowed_exts.iter().any(|allowed_ext| allowed_ext == ext)
+                && let Ok(creation_time) = path.metadata().and_then(|meta| meta.created())
+            {
+                return creation_time >= timestamp;
             }
 
             false
@@ -241,13 +240,12 @@ mod db_utils {
         let list = WalkDir::new(root_dir)
             .into_iter()
             .filter_map(|entry| {
-                if let Ok(entry) = entry {
-                    if let Ok(full_path) = entry.path().canonicalize()
-                        && entry.file_type.is_file()
-                        && is_ok(&full_path)
-                    {
-                        return Some(full_path);
-                    }
+                if let Ok(entry) = entry
+                    && let Ok(full_path) = entry.path().canonicalize()
+                    && entry.file_type.is_file()
+                    && is_ok(&full_path)
+                {
+                    return Some(full_path);
                 }
                 None
             })

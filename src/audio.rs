@@ -41,10 +41,10 @@ type SenderSongOver = mpsc::Sender<()>;
 
 #[derive(Clone, Copy, Debug, Default)]
 enum PlaybackState {
-    Playing,
-    Paused,
     #[default]
     Stopped,
+    Playing,
+    Paused,
 }
 
 #[derive(Clone)]
@@ -421,6 +421,14 @@ impl Audio {
             .as_ref()
             .map(|data| *data.elapsed.read().unwrap())
             .unwrap_or(0)
+    }
+
+    pub fn state(&self) -> u8 {
+        match self.playback_state {
+            PlaybackState::Stopped => 0,
+            PlaybackState::Playing => 1,
+            PlaybackState::Paused => 2,
+        }
     }
 
     pub fn volume(&self) -> u8 {

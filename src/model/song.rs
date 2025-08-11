@@ -196,10 +196,10 @@ mod song_utils {
         let format_opts: FormatOptions = Default::default();
         let metadata_opts: MetadataOptions = Default::default();
         let mut hint = Hint::new();
-        if let Some(ext) = path.extension() {
-            if let Some(ext) = ext.to_str() {
-                hint.with_extension(ext);
-            }
+        if let Some(ext) = path.extension()
+            && let Some(ext) = ext.to_str()
+        {
+            hint.with_extension(ext);
         }
         let probe_res =
             symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts)?;

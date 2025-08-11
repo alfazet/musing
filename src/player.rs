@@ -174,7 +174,7 @@ impl Player {
                     match self.queue.remove(queue_id) {
                         Some(true) => {
                             self.queue.reset_pos();
-                            self.audio.stop();
+                            let _ = self.audio.stop();
                         }
                         None => {
                             return Response::new_err(format!(
@@ -202,6 +202,9 @@ impl Player {
             }
             StatusRequestKind::Queue => {
                 Response::new_ok().with_item("queue".into(), &self.queue.as_inner())
+            }
+            StatusRequestKind::State => {
+                Response::new_ok().with_item("state".into(), &self.audio.state())
             }
             StatusRequestKind::Volume => {
                 Response::new_ok().with_item("volume".into(), &self.audio.volume())

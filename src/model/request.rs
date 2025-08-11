@@ -51,6 +51,7 @@ pub enum StatusRequestKind {
     Current,
     Elapsed,
     Queue,
+    State,
     Volume,
 }
 
@@ -260,6 +261,7 @@ impl TryFrom<&str> for RequestKind {
                 "current" => Request::Status(Status::Current),
                 "elapsed" => Request::Status(Status::Elapsed),
                 "queue" => Request::Status(Status::Queue),
+                "state" => Request::Status(Status::State),
                 "volume" => match tokens.len() {
                     1 => Request::Status(Status::Volume),
                     _ => Request::Playback(Playback::Volume(tokens[1..].try_into()?)),
