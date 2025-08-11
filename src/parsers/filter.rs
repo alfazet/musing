@@ -122,7 +122,7 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>> {
             Some(')') => tokens.push(Token::ClosingParen),
             Some('&') => tokens.push(Token::Operator(OP_AND)),
             Some('|') => tokens.push(Token::Operator(OP_OR)),
-            Some(c) => tokenize_filter(&mut s).map(|filter| {
+            Some(_) => tokenize_filter(&mut s).map(|filter| {
                 tokens.push(Token::Filter(filter));
                 already = true;
             })?,

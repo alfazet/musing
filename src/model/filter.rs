@@ -100,13 +100,13 @@ impl TryFrom<Vec<FilterExprSymbol>> for FilterExpr {
         let mut stack_size = 0;
         for symbol in symbols.iter() {
             match symbol {
-                FESymbol::Operator(op) => {
+                FESymbol::Operator(_) => {
                     if stack_size < 2 {
                         bail!("invalid filter expression");
                     }
                     stack_size -= 1;
                 }
-                FESymbol::Filter(filter) => stack_size += 1,
+                FESymbol::Filter(_) => stack_size += 1,
             }
         }
         if stack_size == 1 {

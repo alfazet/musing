@@ -62,10 +62,6 @@ impl SongMeta {
         Self { data }
     }
 
-    pub fn contains(&self, tag: &TagKey) -> bool {
-        self.data.contains_key(tag)
-    }
-
     pub fn get(&self, tag: &TagKey) -> Option<&str> {
         self.data.get(tag).map(|s| s.as_str())
     }

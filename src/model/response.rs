@@ -68,19 +68,12 @@ impl Response {
     pub fn with_item(mut self, key: String, value: &dyn ErasedSerialize) -> Self {
         let value = match serde_json::to_value(value) {
             Ok(value) => value,
-            Err(e) => return self,
+            Err(_) => return self,
         };
         let item = ResponseItem { key, value };
         self.append_item(item);
 
         self
-    }
-
-    pub fn push(&mut self, key: String, value: &dyn ErasedSerialize) {
-        if let Ok(value) = serde_json::to_value(value) {
-            let item = ResponseItem { key, value };
-            self.append_item(item);
-        }
     }
 
     pub fn into_json_string(self) -> Result<String> {

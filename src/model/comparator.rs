@@ -68,12 +68,11 @@ impl Comparator {
         let rhs = rhs.get(&self.tag_key);
         let ordering = match (lhs, rhs) {
             (Some(lhs), Some(rhs)) => self.cmp_values(lhs, rhs),
-            (Some(lhs), None) => Ordering::Greater,
-            (None, Some(rhs)) => Ordering::Less,
+            (Some(_), None) => Ordering::Greater,
+            (None, Some(_)) => Ordering::Less,
             (None, None) => Ordering::Equal,
         };
 
-        let v = Vec::<i32>::new();
         if self.inverted {
             ordering.reverse()
         } else {

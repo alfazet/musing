@@ -57,7 +57,7 @@ impl ClientHandler {
                 res = self.stream.read_exact(&mut buf) => res,
                 _ = self.rx_shutdown.recv() => break,
             };
-            if let Err(e) = res {
+            if let Err(_) = res {
                 let _ = self.stream.shutdown().await;
                 break;
             }
@@ -105,7 +105,7 @@ pub async fn run(config: Config) -> Result<()> {
         player_config,
     } = config;
     let (tx, rx) = mpsc::unbounded_channel();
-    let (tx_shutdown, rx_shutdown) = broadcast::channel(1);
+    let (tx_shutdown, _) = broadcast::channel(1);
     let server = Server::new(server_config);
     let player_task = tokio::spawn(async move { player::run(player_config, rx).await });
     let res = tokio::select! {

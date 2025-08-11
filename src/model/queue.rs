@@ -54,11 +54,6 @@ impl Queue {
         Self::default()
     }
 
-    pub fn db_id(&self, queue_id: u32) -> Option<u32> {
-        let i = self.find_by_id(queue_id)?;
-        Some(self.list[i].db_id)
-    }
-
     pub fn current(&self) -> Option<Entry> {
         self.pos.map(|pos| self.list[pos])
     }
@@ -170,7 +165,7 @@ impl Queue {
     }
 
     pub fn toggle_random(&mut self) {
-        if let Some(random) = &self.random {
+        if let Some(_) = &self.random {
             let _ = self.random.take();
         } else {
             let not_played_ids: Vec<_> = self
