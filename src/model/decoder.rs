@@ -28,6 +28,7 @@ pub enum SeekDirection {
 
 #[derive(Debug)]
 pub enum DecoderRequest {
+    Elapsed,
     Seek(u64, SeekDirection),
 }
 
@@ -65,7 +66,7 @@ impl Decoder {
         let mut chunk = Vec::new();
         loop {
             if let Ok(request) = rx_request.try_recv() {
-                // handle seeking
+                // handle seeking and elapsed (get TimeBase from decoder.codec_params())
                 eprintln!("{:?}", request);
             }
             match self.demuxer.next_packet() {

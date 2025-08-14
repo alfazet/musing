@@ -1,12 +1,13 @@
 use anyhow::{Result, anyhow, bail};
-use tokio::sync::{mpsc::Sender, oneshot};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     model::{comparator::Comparator, filter::FilterExpr, response::Response, tag_key::TagKey},
     parsers::request,
 };
 
-type RespondTo = oneshot::Sender<Response>;
+pub type SenderRequest = mpsc::UnboundedSender<Request>;
+pub type ReceiverRequest = mpsc::UnboundedReceiver<Request>;
 
 pub enum Volume {
     Change(i8),
@@ -64,7 +65,7 @@ pub enum RequestKind {
 
 pub struct Request {
     pub kind: RequestKind,
-    pub tx_response: RespondTo,
+    pub tx_response: oneshot::Sender<Response>,
 }
 
 impl TryFrom<&[String]> for MetadataArgs {
@@ -233,38 +234,37 @@ impl TryFrom<&str> for RequestKind {
         use DbRequestKind as Db;
         use PlaybackRequestKind as Playback;
         use QueueRequestKind as Queue;
-        use RequestKind as Request;
         use StatusRequestKind as Status;
 
         let tokens = request::tokenize(s)?;
         let kind = match tokens.first().map(|s| s.as_str()) {
             Some(request) => match request {
-                "metadata" => Request::Db(Db::Metadata(tokens[1..].try_into()?)),
-                "reset" => Request::Db(Db::Reset),
-                "select" => Request::Db(Db::Select(tokens[1..].try_into()?)),
-                "unique" => Request::Db(Db::Unique(tokens[1..].try_into()?)),
-                "update" => Request::Db(Db::Update),
+                "metadata" => RequestKind::Db(Db::Metadata(tokens[1..].try_into()?)),
+                "reset" => RequestKind::Db(Db::Reset),
+                "select" => RequestKind::Db(Db::Select(tokens[1..].try_into()?)),
+                "unique" => RequestKind::Db(Db::Unique(tokens[1..].try_into()?)),
+                "update" => RequestKind::Db(Db::Update),
 
-                "pause" => Request::Playback(Playback::Pause),
-                "resume" => Request::Playback(Playback::Resume),
-                "seek" => Request::Playback(Playback::Seek(tokens[1..].try_into()?)),
-                "stop" => Request::Playback(Playback::Stop),
-                "toggle" => Request::Playback(Playback::Toggle),
+                "pause" => RequestKind::Playback(Playback::Pause),
+                "resume" => RequestKind::Playback(Playback::Resume),
+                "seek" => RequestKind::Playback(Playback::Seek(tokens[1..].try_into()?)),
+                "stop" => RequestKind::Playback(Playback::Stop),
+                "toggle" => RequestKind::Playback(Playback::Toggle),
 
-                "add" => Request::Queue(Queue::Add(tokens[1..].try_into()?)),
-                "clear" => Request::Queue(Queue::Clear),
-                "next" => Request::Queue(Queue::Next),
-                "play" => Request::Queue(Queue::Play(tokens[1..].try_into()?)),
-                "previous" => Request::Queue(Queue::Previous),
-                "remove" => Request::Queue(Queue::Remove(tokens[1..].try_into()?)),
+                "add" => RequestKind::Queue(Queue::Add(tokens[1..].try_into()?)),
+                "clear" => RequestKind::Queue(Queue::Clear),
+                "next" => RequestKind::Queue(Queue::Next),
+                "play" => RequestKind::Queue(Queue::Play(tokens[1..].try_into()?)),
+                "previous" => RequestKind::Queue(Queue::Previous),
+                "remove" => RequestKind::Queue(Queue::Remove(tokens[1..].try_into()?)),
 
-                "current" => Request::Status(Status::Current),
-                "elapsed" => Request::Status(Status::Elapsed),
-                "queue" => Request::Status(Status::Queue),
-                "state" => Request::Status(Status::State),
+                "current" => RequestKind::Status(Status::Current),
+                "elapsed" => RequestKind::Status(Status::Elapsed),
+                "queue" => RequestKind::Status(Status::Queue),
+                "state" => RequestKind::Status(Status::State),
                 "volume" => match tokens.len() {
-                    1 => Request::Status(Status::Volume),
-                    _ => Request::Playback(Playback::Volume(tokens[1..].try_into()?)),
+                    1 => RequestKind::Status(Status::Volume),
+                    _ => RequestKind::Playback(Playback::Volume(tokens[1..].try_into()?)),
                 },
 
                 _ => bail!("invalid request"),
@@ -273,11 +273,5 @@ impl TryFrom<&str> for RequestKind {
         };
 
         Ok(kind)
-    }
-}
-
-impl Request {
-    pub fn new(kind: RequestKind, tx_response: RespondTo) -> Self {
-        Self { kind, tx_response }
     }
 }

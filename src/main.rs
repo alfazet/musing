@@ -1,4 +1,5 @@
 use clap::Parser;
+use tokio::{signal, sync::mpsc};
 
 use crate::config::{CliOptions, Config};
 
@@ -28,8 +29,10 @@ fn setup_logging(cli_opts: &CliOptions) {
 async fn main() {
     let cli_opts = CliOptions::parse();
     setup_logging(&cli_opts);
-    let config = match Config::from_file(cli_opts.config_file.as_deref())
-        .map(|c| c.merge_with_cli(cli_opts))
+    let Config {
+        server_config,
+        player_config,
+    } = match Config::from_file(cli_opts.config_file.as_deref()).map(|c| c.merge_with_cli(cli_opts))
     {
         Ok(config) => config,
         Err(e) => {
@@ -38,9 +41,11 @@ async fn main() {
         }
     };
 
+    let (tx_request, rx_request) = mpsc::unbounded_channel();
     let res = tokio::select! {
-        _ = tokio::signal::ctrl_c() => Ok(()),
-        res = server::run(config) => res,
+        _ = signal::ctrl_c() => Ok(()),
+        res = server::run(server_config, tx_request) => res,
+        res = player::run(player_config, rx_request) => res,
     };
     if let Err(e) = res {
         log::error!("fatal error ({})", e);
