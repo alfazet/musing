@@ -1,4 +1,5 @@
 pub mod comparator;
+pub mod decoder;
 pub mod filter;
 pub mod queue;
 pub mod request;
