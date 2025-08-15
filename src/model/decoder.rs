@@ -14,7 +14,7 @@ use tokio::{sync::mpsc, task};
 
 use crate::model::song::*;
 
-type BaseSample = f64;
+pub type BaseSample = f64;
 type ReceiverDecoderRequest = crossbeam_channel::Receiver<DecoderRequest>;
 type SenderSampleChunk = crossbeam_channel::Sender<Vec<BaseSample>>;
 
@@ -56,8 +56,6 @@ impl Decoder {
         })
     }
 
-    // send samples to the audio task, from there they will be shared to all devices
-    // (sharing = every device has its own crossbeam channel)
     pub fn run(
         &mut self,
         tx_sample_chunk: SenderSampleChunk,
@@ -100,5 +98,9 @@ impl Decoder {
                 _ => (),
             }
         }
+    }
+
+    pub fn sample_rate(&self) -> Option<u32> {
+        self.decoder.codec_params().sample_rate
     }
 }

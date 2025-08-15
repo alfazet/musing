@@ -3,11 +3,13 @@ use erased_serde::Serialize as ErasedSerialize;
 use serde_json::{self, Map, Value as JsonValue};
 use std::fmt::{self, Display, Formatter};
 
+#[derive(Debug)]
 enum ResponseKind {
     Ok,
     Err(String),
 }
 
+#[derive(Debug)]
 struct ResponseItem {
     key: String,
     value: JsonValue,

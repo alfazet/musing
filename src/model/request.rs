@@ -9,6 +9,7 @@ use crate::{
 pub type SenderRequest = mpsc::UnboundedSender<Request>;
 pub type ReceiverRequest = mpsc::UnboundedReceiver<Request>;
 
+#[derive(Debug)]
 pub enum Volume {
     Change(i8),
     Set(u8),

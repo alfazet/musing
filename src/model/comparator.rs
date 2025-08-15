@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::model::{
-    song::*,
+    song::{Metadata, Song},
     tag_key::{TagKey, TagKeyKind},
 };
 
@@ -63,7 +63,7 @@ impl Comparator {
         }
     }
 
-    pub fn cmp(&self, lhs: &SongMeta, rhs: &SongMeta) -> Ordering {
+    pub fn cmp(&self, lhs: &Metadata, rhs: &Metadata) -> Ordering {
         let lhs = lhs.get(&self.tag_key);
         let rhs = rhs.get(&self.tag_key);
         let ordering = match (lhs, rhs) {

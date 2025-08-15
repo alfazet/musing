@@ -28,9 +28,8 @@ struct Server {
 
 impl ClientHandler {
     pub fn new(stream: TcpStream, tx: SenderToPlayer, rx_shutdown: ShutdownReceiver) -> Self {
-        let stream = BufReader::new(stream);
         Self {
-            stream,
+            stream: BufReader::new(stream),
             tx,
             rx_shutdown,
         }

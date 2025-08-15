@@ -93,7 +93,7 @@ impl Server {
             tokio::spawn(async move {
                 let mut client_handler = ClientHandler::new(stream);
                 if let Err(e) = client_handler.run(tx_request_, rx_shutdown).await {
-                    log::error!("network error ({})", e);
+                    log::error!("client handler error ({})", e);
                 }
             });
         }

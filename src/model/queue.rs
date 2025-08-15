@@ -131,8 +131,8 @@ impl Queue {
         }
     }
 
-    /// Returns Some(true) if the removed song was currently playing
-    /// Some(false) if not, and None if the song wasn't found.
+    // returns Some(true) if the removed song was currently playing
+    // some(false) if not, and None if the song wasn't found.
     pub fn remove(&mut self, id: u32) -> Option<bool> {
         if let Some(random) = &mut self.random {
             random.ids.retain(|random_id| *random_id != id);

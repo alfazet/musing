@@ -32,6 +32,11 @@ pub struct Song {
     pub metadata: Metadata,
 }
 
+#[derive(Debug)]
+pub enum SongEvent {
+    Over,
+}
+
 impl From<&MetadataRevision> for Metadata {
     fn from(revision: &MetadataRevision) -> Self {
         let mut data = HashMap::new();
