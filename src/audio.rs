@@ -97,8 +97,8 @@ impl Audio {
         });
         let stream_data = StreamData::new(sample_rate);
         let (tx_chunk, rx_chunk) = crossbeam_channel::bounded(1);
-        for device in self
-            .devices
+        let devices = Arc::clone(&self.devices);
+        for device in devices
             .write()
             .unwrap()
             .values_mut()
@@ -122,6 +122,9 @@ impl Audio {
                     .into_iter()
                     .map(|s| (s * mult).clamp(-1.0, 1.0))
                     .collect();
+                for device in devices.write().unwrap().values() {
+                    device.send_chunk(chunk.clone());
+                }
             }
         });
         self.playback.state = PlaybackState::Playing;

@@ -67,9 +67,10 @@ impl Decoder {
     ) -> Result<()> {
         let mut chunk = Vec::new();
         loop {
-            if let Ok(request) = rx_request.try_recv() {
-                // handle seek
-                eprintln!("{:?}", request);
+            match rx_request.try_recv() {
+                Ok(request) => log::warn!("{:?}", request),
+                Err(TryRecvError::Disconnected) => break Ok(()),
+                _ => (),
             }
             match self.demuxer.next_packet() {
                 Ok(packet) if packet.track_id() == self.track_id => {
