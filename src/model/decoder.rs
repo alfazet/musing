@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow, bail};
+use crossbeam_channel::{self as cbeam_chan, RecvTimeoutError, TryRecvError};
 use std::mem;
 use symphonia::core::{
     audio::SampleBuffer,
@@ -10,9 +11,12 @@ use symphonia::core::{
     meta::{self, Metadata, MetadataOptions, MetadataRevision},
     probe::{Hint, ProbeResult, ProbedMetadata},
 };
-use tokio::{sync::mpsc, task};
+use tokio::{
+    sync::mpsc::{self as tokio_chan},
+    task,
+};
 
-use crate::model::song::*;
+use crate::model::song::{Song, SongEvent};
 
 pub type BaseSample = f64;
 type ReceiverDecoderRequest = crossbeam_channel::Receiver<DecoderRequest>;
@@ -28,7 +32,6 @@ pub enum SeekDirection {
 
 #[derive(Debug)]
 pub enum DecoderRequest {
-    Elapsed,
     Seek(u64, SeekDirection),
 }
 
@@ -58,13 +61,14 @@ impl Decoder {
 
     pub fn run(
         &mut self,
-        tx_sample_chunk: SenderSampleChunk,
-        rx_request: ReceiverDecoderRequest,
+        tx_sample_chunk: cbeam_chan::Sender<Vec<BaseSample>>,
+        tx_event: tokio_chan::UnboundedSender<SongEvent>,
+        rx_request: cbeam_chan::Receiver<DecoderRequest>,
     ) -> Result<()> {
         let mut chunk = Vec::new();
         loop {
             if let Ok(request) = rx_request.try_recv() {
-                // handle seeking and elapsed (get TimeBase from decoder.codec_params())
+                // handle seek
                 eprintln!("{:?}", request);
             }
             match self.demuxer.next_packet() {
@@ -76,6 +80,8 @@ impl Decoder {
                             buf.copy_interleaved_ref(decoded);
                             chunk.extend_from_slice(buf.samples());
                             if chunk.len() >= CHUNK_SIZE {
+                                // TODO: send the chunk of samples together
+                                // with its timestamp
                                 if tx_sample_chunk.send(mem::take(&mut chunk)).is_err() {
                                     // receiver of sample chunks went out of scope =>
                                     // playback of this song ended

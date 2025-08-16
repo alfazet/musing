@@ -22,16 +22,12 @@ use crate::{
 
 type ReceiverSongEvent = mpsc::UnboundedReceiver<SongEvent>;
 
-struct Receivers {
-    rx_request: ReceiverRequest,
-    rx_event: ReceiverSongEvent,
-}
-
 struct Player {
     queue: Queue,
     database: Database,
     audio: Audio,
-    receivers: Receivers,
+    rx_request: ReceiverRequest,
+    rx_event: ReceiverSongEvent,
 }
 
 impl Player {
@@ -51,7 +47,7 @@ impl Player {
         let song = self.song_by_db_id(db_id)?.try_into()?;
         let decoder = Decoder::try_new(song, false)?;
         let (tx_event, rx_event) = mpsc::unbounded_channel();
-        self.receivers.rx_event = rx_event;
+        self.rx_event = rx_event;
         self.audio.play(decoder, tx_event)?;
 
         Ok(())
@@ -242,23 +238,20 @@ impl Player {
     pub fn new(database: Database, audio: Audio, rx_request: ReceiverRequest) -> Self {
         let queue = Queue::default();
         let (_, rx_event) = mpsc::unbounded_channel();
-        let receivers = Receivers {
-            rx_request,
-            rx_event,
-        };
 
         Self {
             queue,
             database,
             audio,
-            receivers,
+            rx_request,
+            rx_event,
         }
     }
 
     pub async fn run(&mut self) -> Result<()> {
         loop {
             tokio::select! {
-                res = self.receivers.rx_request.recv() => match res {
+                res = self.rx_request.recv() => match res {
                     Some(request) => {
                         let Request { kind, tx_response } = request;
                         let response = self.handle_request(kind).await;
@@ -267,7 +260,7 @@ impl Player {
                     // breaks when all client handlers drop
                     None => break Ok(()),
                 },
-                Some(event) = self.receivers.rx_event.recv() => {
+                Some(event) = self.rx_event.recv() => {
                     self.move_next_until_playable();
                     if self.queue.current().is_none() {
                         self.queue.reset_pos();
