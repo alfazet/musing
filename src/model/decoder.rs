@@ -19,8 +19,6 @@ use tokio::{
 use crate::model::song::{Song, SongEvent};
 
 pub type BaseSample = f64;
-type ReceiverDecoderRequest = crossbeam_channel::Receiver<DecoderRequest>;
-type SenderSampleChunk = crossbeam_channel::Sender<Vec<BaseSample>>;
 
 const CHUNK_SIZE: usize = 512;
 

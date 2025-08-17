@@ -1,5 +1,8 @@
 use clap::Parser;
-use tokio::{signal, sync::mpsc};
+use tokio::{
+    signal,
+    sync::mpsc::{self as tokio_chan},
+};
 
 use crate::config::{CliOptions, Config};
 
@@ -41,7 +44,7 @@ async fn main() {
         }
     };
 
-    let (tx_request, rx_request) = mpsc::unbounded_channel();
+    let (tx_request, rx_request) = tokio_chan::unbounded_channel();
     let res = tokio::select! {
         _ = signal::ctrl_c() => Ok(()),
         res = server::run(server_config, tx_request) => res,

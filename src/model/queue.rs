@@ -165,9 +165,7 @@ impl Queue {
     }
 
     pub fn toggle_random(&mut self) {
-        if let Some(_) = &self.random {
-            let _ = self.random.take();
-        } else {
+        if self.random.is_none() {
             let not_played_ids: Vec<_> = self
                 .list
                 .clone()
@@ -182,6 +180,8 @@ impl Queue {
                 .map(|entry| entry.queue_id)
                 .collect();
             self.random = Some(Random::new(not_played_ids));
+        } else {
+            let _ = self.random.take();
         }
     }
 }

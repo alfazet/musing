@@ -3,13 +3,17 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     signal,
-    sync::{broadcast, mpsc, oneshot},
+    sync::{
+        broadcast,
+        mpsc::{self as tokio_chan},
+        oneshot,
+    },
 };
 
 use crate::{
     config::ServerConfig,
     model::{
-        request::{Request, RequestKind, SenderRequest},
+        request::{Request, RequestKind},
         response::Response,
     },
 };
@@ -31,7 +35,7 @@ impl ClientHandler {
 
     pub async fn run(
         &mut self,
-        tx_request: SenderRequest,
+        tx_request: tokio_chan::UnboundedSender<Request>,
         mut rx_shutdown: broadcast::Receiver<()>,
     ) -> Result<()> {
         self.stream
@@ -54,7 +58,7 @@ impl ClientHandler {
                 res = self.stream.read_exact(&mut buf) => res,
                 _ = rx_shutdown.recv() => break,
             };
-            if let Err(_) = res {
+            if res.is_err() {
                 let _ = self.stream.shutdown().await;
                 break;
             }
@@ -82,7 +86,7 @@ impl Server {
 
     pub async fn run(
         &self,
-        tx_request: SenderRequest,
+        tx_request: tokio_chan::UnboundedSender<Request>,
         tx_shutdown: broadcast::Sender<()>,
     ) -> Result<()> {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", self.port)).await?;
@@ -100,7 +104,10 @@ impl Server {
     }
 }
 
-pub async fn run(config: ServerConfig, tx_request: SenderRequest) -> Result<()> {
+pub async fn run(
+    config: ServerConfig,
+    tx_request: tokio_chan::UnboundedSender<Request>,
+) -> Result<()> {
     // the "shutdown" channel keeps one sender and many receivers
     // each client handler gets its own receiver
     // the only sender gets dropped whenever the server stops

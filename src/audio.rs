@@ -55,7 +55,7 @@ pub struct Audio {
 
 impl From<u8> for Volume {
     fn from(x: u8) -> Self {
-        Self { 0: x.clamp(0, 100) }
+        Self(x.clamp(0, 100))
     }
 }
 
@@ -67,7 +67,7 @@ impl From<Volume> for u8 {
 
 impl Default for Volume {
     fn default() -> Self {
-        Self { 0: 50 }
+        Self(50)
     }
 }
 
@@ -100,7 +100,7 @@ impl Audio {
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.play(stream_data)?;
         }
-        let mut txs: Vec<cbeam_chan::Sender<Vec<BaseSample>>> =
+        let txs: Vec<cbeam_chan::Sender<Vec<BaseSample>>> =
             self.devices.values().filter_map(|d| d.tx_clone()).collect();
 
         tokio::task::spawn_blocking(move || {

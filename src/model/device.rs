@@ -23,8 +23,6 @@ use crate::model::decoder::BaseSample;
 // after how many ms should we give up waiting for samples and write silence
 const UNDERRUN_THRESHOLD: u64 = 500;
 
-type ReceiverSampleChunk = crossbeam_channel::Receiver<Vec<BaseSample>>;
-
 trait Sample: FromSample<BaseSample> + SizedSample + Send + 'static {}
 
 impl Sample for i8 {}
@@ -81,7 +79,7 @@ impl From<CpalDevice> for Device {
 impl Device {
     fn create_data_callback<T>(
         &self,
-        rx_sample_chunk: ReceiverSampleChunk,
+        rx_sample_chunk: cbeam_chan::Receiver<Vec<BaseSample>>,
     ) -> Result<impl FnMut(&mut [T], &OutputCallbackInfo) + Send + 'static>
     where
         T: Sample,
@@ -158,10 +156,7 @@ impl Device {
     }
 
     pub fn is_enabled(&self) -> bool {
-        match self.state {
-            DeviceState::Disabled => false,
-            _ => true,
-        }
+        !matches!(self.state, DeviceState::Disabled)
     }
 
     // give the current stream to the new device so it can join in

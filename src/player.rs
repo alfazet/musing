@@ -3,7 +3,10 @@ use std::pin::Pin;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::{mpsc, oneshot},
+    sync::{
+        mpsc::{self as tokio_chan},
+        oneshot,
+    },
     task,
 };
 
@@ -14,20 +17,18 @@ use crate::{
     model::{
         decoder::Decoder,
         queue::Queue,
-        request::{self, ReceiverRequest, Request, RequestKind},
+        request::{self, Request, RequestKind},
         response::Response,
         song::{Song, SongEvent},
     },
 };
 
-type ReceiverSongEvent = mpsc::UnboundedReceiver<SongEvent>;
-
 struct Player {
     queue: Queue,
     database: Database,
     audio: Audio,
-    rx_request: ReceiverRequest,
-    rx_event: ReceiverSongEvent,
+    rx_request: tokio_chan::UnboundedReceiver<Request>,
+    rx_event: tokio_chan::UnboundedReceiver<SongEvent>,
 }
 
 impl Player {
@@ -44,9 +45,9 @@ impl Player {
 
     fn play(&mut self, db_id: u32) -> Result<()> {
         self.queue.add_current_to_history();
-        let song = self.song_by_db_id(db_id)?.try_into()?;
+        let song = self.song_by_db_id(db_id)?;
         let decoder = Decoder::try_new(song, false)?;
-        let (tx_event, rx_event) = mpsc::unbounded_channel();
+        let (tx_event, rx_event) = tokio_chan::unbounded_channel();
         self.rx_event = rx_event;
         self.audio.play(decoder, tx_event)?;
 
@@ -235,9 +236,13 @@ impl Player {
         }
     }
 
-    pub fn new(database: Database, audio: Audio, rx_request: ReceiverRequest) -> Self {
+    pub fn new(
+        database: Database,
+        audio: Audio,
+        rx_request: tokio_chan::UnboundedReceiver<Request>,
+    ) -> Self {
         let queue = Queue::default();
-        let (_, rx_event) = mpsc::unbounded_channel();
+        let (_, rx_event) = tokio_chan::unbounded_channel();
 
         Self {
             queue,
@@ -273,7 +278,10 @@ impl Player {
     }
 }
 
-pub async fn run(config: PlayerConfig, rx_request: ReceiverRequest) -> Result<()> {
+pub async fn run(
+    config: PlayerConfig,
+    rx_request: tokio_chan::UnboundedReceiver<Request>,
+) -> Result<()> {
     let PlayerConfig {
         default_audio_device,
         music_dir,

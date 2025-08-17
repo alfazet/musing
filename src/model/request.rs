@@ -1,13 +1,13 @@
 use anyhow::{Result, anyhow, bail};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{
+    mpsc::{self as tokio_chan},
+    oneshot,
+};
 
 use crate::{
     model::{comparator::Comparator, filter::FilterExpr, response::Response, tag_key::TagKey},
     parsers::request,
 };
-
-pub type SenderRequest = mpsc::UnboundedSender<Request>;
-pub type ReceiverRequest = mpsc::UnboundedReceiver<Request>;
 
 #[derive(Debug)]
 pub enum Volume {
