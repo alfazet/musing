@@ -21,7 +21,7 @@ use tokio::{
 use crate::model::decoder::BaseSample;
 
 // after how many ms should we give up waiting for samples and write silence
-const UNDERRUN_THRESHOLD: u64 = 50;
+const UNDERRUN_THRESHOLD: u64 = 500;
 
 type ReceiverSampleChunk = crossbeam_channel::Receiver<Vec<BaseSample>>;
 
@@ -112,21 +112,19 @@ impl Device {
 
     fn build_cpal_stream(&self, stream_data: StreamData) -> Result<Stream> {
         let StreamData { sample_rate } = stream_data;
-        let sample_rate = SampleRate(sample_rate.unwrap_or(0));
-        let supported_configs = self.cpal_device.supported_output_configs()?;
-        let first_ok = supported_configs
-            .skip_while(|c| sample_rate < c.min_sample_rate() || sample_rate > c.max_sample_rate())
-            .next();
-        let config = first_ok
-            .map(|c| c.with_sample_rate(sample_rate))
-            .unwrap_or(self.cpal_device.default_output_config()?);
+        let default_config = self.cpal_device.default_output_config()?;
+        let config = StreamConfig {
+            channels: default_config.channels(),
+            sample_rate: SampleRate(sample_rate.unwrap_or(default_config.sample_rate().0)),
+            buffer_size: BufferSize::Default,
+        };
         let (tx_sample_chunk, rx_sample_chunk) = cbeam_chan::bounded(1);
 
         macro_rules! build_output_stream {
             ($type:ty) => {
                 Ok(Stream {
                     cpal_stream: self.cpal_device.build_output_stream(
-                        &config.into(),
+                        &config,
                         self.create_data_callback::<$type>(rx_sample_chunk)?,
                         |e| log::error!("playback error ({})", e),
                         None,
@@ -137,7 +135,7 @@ impl Device {
         }
 
         use SampleFormat::*;
-        match config.sample_format() {
+        match default_config.sample_format() {
             I8 => build_output_stream!(i8),
             I16 => build_output_stream!(i16),
             I32 => build_output_stream!(i32),
@@ -152,12 +150,11 @@ impl Device {
         }
     }
 
-    pub fn send_chunk(&self, chunk: Vec<BaseSample>) -> Result<()> {
-        if let DeviceState::Active(stream) = &self.state {
-            stream.tx_sample_chunk.send(chunk)?;
+    pub fn tx_clone(&self) -> Option<cbeam_chan::Sender<Vec<BaseSample>>> {
+        match &self.state {
+            DeviceState::Active(stream) => Some(stream.tx_sample_chunk.clone()),
+            _ => None,
         }
-
-        Ok(())
     }
 
     pub fn is_enabled(&self) -> bool {

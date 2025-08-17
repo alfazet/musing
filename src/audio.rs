@@ -49,7 +49,7 @@ struct Decoding {
 #[derive(Default)]
 pub struct Audio {
     playback: Playback,
-    devices: Arc<RwLock<HashMap<String, Device>>>,
+    devices: HashMap<String, Device>,
     decoding: Option<Decoding>,
 }
 
@@ -97,15 +97,11 @@ impl Audio {
         });
         let stream_data = StreamData::new(sample_rate);
         let (tx_chunk, rx_chunk) = crossbeam_channel::bounded(1);
-        let devices = Arc::clone(&self.devices);
-        for device in devices
-            .write()
-            .unwrap()
-            .values_mut()
-            .filter(|d| d.is_enabled())
-        {
+        for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.play(stream_data)?;
         }
+        let mut txs: Vec<cbeam_chan::Sender<Vec<BaseSample>>> =
+            self.devices.values().filter_map(|d| d.tx_clone()).collect();
 
         tokio::task::spawn_blocking(move || {
             if let Err(e) = decoder.run(tx_chunk, tx_event, rx_request) {
@@ -122,8 +118,8 @@ impl Audio {
                     .into_iter()
                     .map(|s| (s * mult).clamp(-1.0, 1.0))
                     .collect();
-                for device in devices.write().unwrap().values() {
-                    device.send_chunk(chunk.clone());
+                for tx in txs.iter() {
+                    let _ = tx.send(chunk.clone());
                 }
             }
         });
@@ -135,16 +131,13 @@ impl Audio {
     pub fn add_device(&mut self, device_name: &str) -> Result<()> {
         let cpal_device = audio_utils::get_device_by_name(device_name)?;
         let device = Device::from(cpal_device);
-        self.devices
-            .write()
-            .unwrap()
-            .insert(String::from(device_name), device);
+        self.devices.insert(String::from(device_name), device);
 
         Ok(())
     }
 
     pub fn enable_device(&mut self, device_name: &str) -> Result<()> {
-        if let Some(device) = self.devices.write().unwrap().get_mut(device_name) {
+        if let Some(device) = self.devices.get_mut(device_name) {
             device.enable(
                 self.decoding
                     .as_ref()
@@ -156,13 +149,13 @@ impl Audio {
     }
 
     pub fn disable_device(&mut self, device_name: &str) {
-        if let Some(device) = self.devices.write().unwrap().get_mut(device_name) {
+        if let Some(device) = self.devices.get_mut(device_name) {
             device.disable();
         }
     }
 
     pub fn toggle_device(&mut self, device_name: &str) -> Result<()> {
-        if let Some(device) = self.devices.write().unwrap().get_mut(device_name) {
+        if let Some(device) = self.devices.get_mut(device_name) {
             if device.is_enabled() {
                 device.disable();
             } else {
@@ -181,13 +174,7 @@ impl Audio {
         if let PlaybackState::Stopped = self.playback.state {
             return Ok(());
         }
-        for device in self
-            .devices
-            .write()
-            .unwrap()
-            .values_mut()
-            .filter(|d| d.is_enabled())
-        {
+        for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.pause()?;
         }
         self.playback.state = PlaybackState::Paused;
@@ -199,13 +186,7 @@ impl Audio {
         if let PlaybackState::Stopped = self.playback.state {
             return Ok(());
         }
-        for device in self
-            .devices
-            .write()
-            .unwrap()
-            .values_mut()
-            .filter(|d| d.is_enabled())
-        {
+        for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.resume()?;
         }
         self.playback.state = PlaybackState::Playing;
@@ -214,13 +195,7 @@ impl Audio {
     }
 
     pub fn stop(&mut self) -> Result<()> {
-        for device in self
-            .devices
-            .write()
-            .unwrap()
-            .values_mut()
-            .filter(|d| d.is_enabled())
-        {
+        for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.stop();
         }
         self.playback.state = PlaybackState::Stopped;
