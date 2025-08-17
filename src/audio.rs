@@ -19,7 +19,7 @@ use tokio::{
 };
 
 use crate::model::{
-    decoder::{BaseSample, Decoder, DecoderRequest},
+    decoder::{BaseSample, Decoder, DecoderRequest, Volume},
     device::{Device, StreamData},
     song::{Song, SongEvent},
 };
@@ -32,16 +32,14 @@ enum PlaybackState {
     Paused,
 }
 
-#[derive(Clone, Copy)]
-struct Volume(u8);
-
 #[derive(Default)]
 struct Playback {
     state: PlaybackState,
-    volume: Arc<Mutex<Volume>>,
+    volume: Arc<RwLock<Volume>>,
+    elapsed: Arc<RwLock<u64>>,
 }
 
-struct Decoding {
+struct DecoderData {
     sample_rate: Option<u32>,
     tx_request: cbeam_chan::Sender<DecoderRequest>,
 }
@@ -50,25 +48,7 @@ struct Decoding {
 pub struct Audio {
     playback: Playback,
     devices: HashMap<String, Device>,
-    decoding: Option<Decoding>,
-}
-
-impl From<u8> for Volume {
-    fn from(x: u8) -> Self {
-        Self(x.clamp(0, 100))
-    }
-}
-
-impl From<Volume> for u8 {
-    fn from(v: Volume) -> Self {
-        v.0
-    }
-}
-
-impl Default for Volume {
-    fn default() -> Self {
-        Self(50)
-    }
+    decoder_data: Option<DecoderData>,
 }
 
 impl Audio {
@@ -89,38 +69,22 @@ impl Audio {
         tx_event: tokio_chan::UnboundedSender<SongEvent>,
     ) -> Result<()> {
         let volume = Arc::clone(&self.playback.volume);
+        let elapsed = Arc::clone(&self.playback.elapsed);
         let (tx_request, rx_request) = crossbeam_channel::unbounded();
         let sample_rate = decoder.sample_rate();
-        self.decoding = Some(Decoding {
+        self.decoder_data = Some(DecoderData {
             sample_rate,
             tx_request,
         });
         let stream_data = StreamData::new(sample_rate);
-        let (tx_chunk, rx_chunk) = crossbeam_channel::bounded(1);
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.play(stream_data)?;
         }
-        let txs: Vec<cbeam_chan::Sender<Vec<BaseSample>>> =
+        let devices_txs: Vec<cbeam_chan::Sender<Vec<BaseSample>>> =
             self.devices.values().filter_map(|d| d.tx_clone()).collect();
-
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = decoder.run(tx_chunk, tx_event, rx_request) {
+            if let Err(e) = decoder.run(devices_txs, tx_event, rx_request, volume, elapsed) {
                 log::error!("decoder error ({})", e);
-            }
-        });
-
-        tokio::task::spawn_blocking(move || {
-            while let Ok(mut chunk) = rx_chunk.recv() {
-                // get the timestamp of this chunk and change elapsed
-                let v = { *volume.lock().unwrap() };
-                let mult = audio_utils::volume_to_mult(v);
-                chunk = chunk
-                    .into_iter()
-                    .map(|s| (s * mult).clamp(-1.0, 1.0))
-                    .collect();
-                for tx in txs.iter() {
-                    let _ = tx.send(chunk.clone());
-                }
             }
         });
         self.playback.state = PlaybackState::Playing;
@@ -139,7 +103,7 @@ impl Audio {
     pub fn enable_device(&mut self, device_name: &str) -> Result<()> {
         if let Some(device) = self.devices.get_mut(device_name) {
             device.enable(
-                self.decoding
+                self.decoder_data
                     .as_ref()
                     .map(|d| StreamData::new(d.sample_rate)),
             )?;
@@ -160,7 +124,7 @@ impl Audio {
                 device.disable();
             } else {
                 device.enable(
-                    self.decoding
+                    self.decoder_data
                         .as_ref()
                         .map(|d| StreamData::new(d.sample_rate)),
                 )?;
@@ -199,7 +163,7 @@ impl Audio {
             device.stop();
         }
         self.playback.state = PlaybackState::Stopped;
-        let _ = self.decoding.take();
+        let _ = self.decoder_data.take();
 
         Ok(())
     }
@@ -211,6 +175,34 @@ impl Audio {
             _ => Ok(()),
         }
     }
+
+    pub fn change_volume(&mut self, delta: i8) {
+        let mut v_lock = self.playback.volume.write().unwrap();
+        let v: u8 = (*v_lock).into();
+        // TODO: clean up when
+        // https://doc.rust-lang.org/std/primitive.u8.html#method.saturating_sub_signed
+        // stablizies
+        *v_lock = {
+            if delta < 0 {
+                v.saturating_sub(delta.unsigned_abs())
+            } else {
+                v.saturating_add(delta.unsigned_abs())
+            }
+        }
+        .into()
+    }
+
+    pub fn set_volume(&mut self, new_v: u8) {
+        *self.playback.volume.write().unwrap() = new_v.into();
+    }
+
+    pub fn volume(&self) -> u8 {
+        (*self.playback.volume.read().unwrap()).into()
+    }
+
+    pub fn state(&self) -> u8 {
+        self.playback.state as u8
+    }
 }
 
 mod audio_utils {
@@ -221,12 +213,5 @@ mod audio_utils {
         host.output_devices()?
             .find(|x| x.name().map(|s| s == device_name).unwrap_or(false))
             .ok_or(anyhow!("audio device `{}` unavailable", device_name))
-    }
-
-    // non-linear volume slider
-    // source: https://www.dr-lex.be/info-stuff/volumecontrols.html
-    pub fn volume_to_mult(v: Volume) -> f64 {
-        let v: u8 = v.into();
-        (0.07 * (v as f64)).exp() / 1000.0
     }
 }

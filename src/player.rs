@@ -99,7 +99,7 @@ impl Player {
     }
 
     fn playback_request(&mut self, req: request::PlaybackRequestKind) -> Response {
-        use request::{PlaybackRequestKind, SeekArgs, Volume, VolumeArgs};
+        use request::{PlaybackRequestKind, SeekArgs, VolumeArgs, VolumeRequest};
 
         match req {
             PlaybackRequestKind::Pause => self.audio.pause().into(),
@@ -116,11 +116,11 @@ impl Player {
             }
             PlaybackRequestKind::Toggle => self.audio.toggle().into(),
             PlaybackRequestKind::Volume(args) => {
-                // let VolumeArgs(volume) = args;
-                // match volume {
-                //     Volume::Change(x) => self.audio.change_volume(x),
-                //     Volume::Set(x) => self.audio.set_volume(x),
-                // }
+                let VolumeArgs(volume_request) = args;
+                match volume_request {
+                    VolumeRequest::Change(x) => self.audio.change_volume(x),
+                    VolumeRequest::Set(x) => self.audio.set_volume(x),
+                }
 
                 Response::new_ok()
             }
@@ -217,12 +217,10 @@ impl Player {
                 Response::new_ok().with_item("queue".into(), &self.queue.as_inner())
             }
             StatusRequestKind::State => {
-                // Response::new_ok().with_item("state".into(), &self.audio.state())
-                Response::new_ok()
+                Response::new_ok().with_item("state".into(), &self.audio.state())
             }
             StatusRequestKind::Volume => {
-                // Response::new_ok().with_item("volume".into(), &self.audio.volume())
-                Response::new_ok()
+                Response::new_ok().with_item("volume".into(), &self.audio.volume())
             }
         }
     }
@@ -262,14 +260,16 @@ impl Player {
                         let response = self.handle_request(kind).await;
                         let _ = tx_response.send(response);
                     }
-                    // breaks when all client handlers drop
+                    // breaks when all client handlers go out of scope
                     None => break Ok(()),
                 },
-                Some(event) = self.rx_event.recv() => {
-                    self.move_next_until_playable();
-                    if self.queue.current().is_none() {
-                        self.queue.reset_pos();
-                        let _ = self.audio.stop();
+                Some(event) = self.rx_event.recv() => match event {
+                    SongEvent::Over => {
+                        self.move_next_until_playable();
+                        if self.queue.current().is_none() {
+                            self.queue.reset_pos();
+                            let _ = self.audio.stop();
+                        }
                     }
                 },
                 else => break Ok(())

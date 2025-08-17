@@ -21,7 +21,7 @@ use tokio::{
 use crate::model::decoder::BaseSample;
 
 // after how many ms should we give up waiting for samples and write silence
-const UNDERRUN_THRESHOLD: u64 = 500;
+const UNDERRUN_THRESHOLD: u64 = 250;
 
 trait Sample: FromSample<BaseSample> + SizedSample + Send + 'static {}
 
@@ -159,17 +159,20 @@ impl Device {
         !matches!(self.state, DeviceState::Disabled)
     }
 
-    // give the current stream to the new device so it can join in
     pub fn enable(&mut self, stream_data: Option<StreamData>) -> Result<()> {
-        self.state = DeviceState::Idle;
-        if let Some(stream_data) = stream_data {
-            self.play(stream_data)?;
+        if matches!(self.state, DeviceState::Disabled) {
+            // give the current stream to the new device so it can join in
+            self.state = DeviceState::Idle;
+            if let Some(stream_data) = stream_data {
+                self.play(stream_data)?;
+            }
         }
 
         Ok(())
     }
 
     pub fn disable(&mut self) {
+        // this drops the stream (and stops it)
         self.state = DeviceState::Disabled;
     }
 
@@ -199,6 +202,7 @@ impl Device {
     }
 
     pub fn stop(&mut self) {
+        // this drops the stream (and stops it)
         self.state = DeviceState::Idle;
     }
 }

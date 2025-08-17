@@ -5,12 +5,15 @@ use tokio::sync::{
 };
 
 use crate::{
-    model::{comparator::Comparator, filter::FilterExpr, response::Response, tag_key::TagKey},
+    model::{
+        comparator::Comparator, decoder::Volume, filter::FilterExpr, response::Response,
+        tag_key::TagKey,
+    },
     parsers::request,
 };
 
 #[derive(Debug)]
-pub enum Volume {
+pub enum VolumeRequest {
     Change(i8),
     Set(u8),
 }
@@ -27,7 +30,7 @@ pub enum DbRequestKind {
 }
 
 pub struct SeekArgs(pub i32); // in seconds
-pub struct VolumeArgs(pub Volume);
+pub struct VolumeArgs(pub VolumeRequest);
 pub enum PlaybackRequestKind {
     Pause,
     Resume,
@@ -164,15 +167,15 @@ impl TryFrom<&[String]> for VolumeArgs {
         let volume = match chars.first().unwrap() {
             '+' => {
                 let x = args[0].trim_start_matches('+').parse::<i8>()?;
-                Volume::Change(x)
+                VolumeRequest::Change(x)
             }
             '-' => {
                 let x = args[0].parse::<i8>()?;
-                Volume::Change(x)
+                VolumeRequest::Change(x)
             }
             _ => {
                 let x = args[0].parse::<u8>()?;
-                Volume::Set(x)
+                VolumeRequest::Set(x)
             }
         };
 
