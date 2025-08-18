@@ -5,9 +5,9 @@ use std::{
     sync::{Arc, RwLock},
 };
 use symphonia::core::{
-    audio::SampleBuffer,
+    audio::{AudioBufferRef, SampleBuffer},
     codecs::{Decoder as SymphoniaDecoder, DecoderOptions as SymphoniaDecoderOptions},
-    conv::ConvertibleSample,
+    conv::{ConvertibleSample, FromSample},
     errors::Error as SymphoniaError,
     formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track},
     io::MediaSourceStream,
@@ -20,14 +20,16 @@ use tokio::{
     task,
 };
 
-use crate::model::song::{Song, SongEvent};
-
-pub type BaseSample = f64;
+use crate::model::{
+    device::{ActiveDeviceProxy, BaseSample},
+    resampler::Resampler,
+    song::{Song, SongEvent},
+};
 
 const BASE_SAMPLE_MIN: BaseSample = -1.0;
 const BASE_SAMPLE_MAX: BaseSample = 1.0;
 const MAX_VOLUME: u8 = 100;
-const CHUNK_SIZE: usize = 512;
+const CHUNK_SIZE: usize = 1;
 
 #[derive(Clone, Copy)]
 pub struct Volume(u8);
@@ -88,22 +90,42 @@ impl Decoder {
 
     pub fn run(
         &mut self,
-        txs_sample_chunk: Vec<cbeam_chan::Sender<Vec<BaseSample>>>,
+        proxies: Vec<ActiveDeviceProxy>,
         tx_event: tokio_chan::UnboundedSender<SongEvent>,
         rx_request: cbeam_chan::Receiver<DecoderRequest>,
         volume: Arc<RwLock<Volume>>,
         elapsed: Arc<RwLock<u64>>,
     ) -> Result<()> {
-        let send_chunk = |chunk: Vec<BaseSample>| -> bool {
+        let send = |proxies: &[ActiveDeviceProxy],
+                    resamplers: &mut [Option<Resampler<BaseSample>>],
+                    decoded: AudioBufferRef|
+         -> bool {
+            if decoded.frames() == 0 {
+                return true;
+            }
             let v = { *volume.read().unwrap() };
             let mult = decoder_utils::volume_to_mult(v);
-            let to_send: Vec<_> = chunk
-                .iter()
-                .map(|s| (s * mult).clamp(BASE_SAMPLE_MIN, BASE_SAMPLE_MAX))
-                .collect();
-            for tx in txs_sample_chunk.iter() {
-                if tx.send(to_send.clone()).is_err() {
-                    // receiver(s) went out of scope => playback of this song had been stopped
+            let spec = *decoded.spec();
+            let duration = decoded.capacity() as u64;
+            let mut buf = SampleBuffer::new(duration, spec);
+            buf.copy_interleaved_ref(decoded.clone());
+            let unchanged_samples = buf.samples().to_vec();
+
+            for (proxy, resampler) in proxies.iter().zip(resamplers.iter_mut()) {
+                let samples = match resampler {
+                    Some(resampler) => match resampler.resample(&decoded) {
+                        Some(samples) => samples,
+                        None => return true,
+                    },
+                    None => unchanged_samples.clone(),
+                };
+                let to_send: Vec<_> = samples
+                    .into_iter()
+                    .map(|s| (s * mult).clamp(BASE_SAMPLE_MIN, BASE_SAMPLE_MAX))
+                    .collect();
+                let avg = to_send.iter().fold(0.0, |acc, x| acc + x.abs()) / (to_send.len() as f64);
+                eprintln!("{}", avg);
+                if proxy.tx_sample_chunk.send(to_send).is_err() {
                     return false;
                 }
             }
@@ -113,7 +135,8 @@ impl Decoder {
 
         let time_base = self.decoder.codec_params().time_base;
         let mut prev_elapsed: u64 = 0;
-        let mut chunk = Vec::new();
+        let mut first_packet = true;
+        let mut resamplers: Vec<Option<Resampler<BaseSample>>> = Vec::new();
         loop {
             match rx_request.try_recv() {
                 Ok(request) => match request {
@@ -142,11 +165,23 @@ impl Decoder {
                 Ok(packet) if packet.track_id() == self.track_id => {
                     match self.decoder.decode(&packet) {
                         Ok(decoded) => {
-                            let mut buf =
-                                SampleBuffer::new(decoded.frames() as u64, *decoded.spec());
-                            buf.copy_interleaved_ref(decoded);
-                            chunk.extend_from_slice(buf.samples());
-                            if chunk.len() >= CHUNK_SIZE && !send_chunk(mem::take(&mut chunk)) {
+                            if first_packet {
+                                let spec = *decoded.spec();
+                                let duration = decoded.capacity() as u64;
+                                for proxy in proxies.iter() {
+                                    if proxy.sample_rate != spec.rate {
+                                        resamplers.push(Some(Resampler::new(
+                                            spec,
+                                            proxy.sample_rate,
+                                            duration,
+                                        )));
+                                    } else {
+                                        resamplers.push(None);
+                                    }
+                                }
+                                first_packet = false;
+                            }
+                            if !send(&proxies, &mut resamplers, decoded) {
                                 return Ok(());
                             }
                             if let Some(time_base) = time_base {
@@ -170,10 +205,6 @@ impl Decoder {
                     SymphoniaError::IoError(e)
                         if matches!(e.kind(), io::ErrorKind::UnexpectedEof) =>
                     {
-                        // send any leftovers
-                        if !chunk.is_empty() {
-                            let _ = send_chunk(chunk);
-                        }
                         // the entire song has been processed
                         break;
                     }

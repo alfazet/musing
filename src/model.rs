@@ -4,6 +4,7 @@ pub mod device;
 pub mod filter;
 pub mod queue;
 pub mod request;
+pub mod resampler;
 pub mod response;
 pub mod song;
 pub mod tag_key;

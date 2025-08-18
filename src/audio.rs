@@ -19,8 +19,8 @@ use tokio::{
 };
 
 use crate::model::{
-    decoder::{BaseSample, Decoder, DecoderRequest, Seek, Volume},
-    device::{Device, StreamData},
+    decoder::{Decoder, DecoderRequest, Seek, Volume},
+    device::{ActiveDeviceProxy, BaseSample, Device, StreamData},
     song::{Song, SongEvent},
 };
 
@@ -80,10 +80,13 @@ impl Audio {
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.play(stream_data)?;
         }
-        let devices_txs: Vec<cbeam_chan::Sender<Vec<BaseSample>>> =
-            self.devices.values().filter_map(|d| d.tx_clone()).collect();
+        let device_proxies: Vec<_> = self
+            .devices
+            .values()
+            .filter_map(|d| ActiveDeviceProxy::try_new(d))
+            .collect();
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = decoder.run(devices_txs, tx_event, rx_request, volume, elapsed) {
+            if let Err(e) = decoder.run(device_proxies, tx_event, rx_request, volume, elapsed) {
                 log::error!("decoder error ({})", e);
             }
         });
@@ -98,7 +101,7 @@ impl Audio {
 
     pub fn add_device(&mut self, device_name: &str) -> Result<()> {
         let cpal_device = audio_utils::get_device_by_name(device_name)?;
-        let device = Device::from(cpal_device);
+        let device = Device::try_from(cpal_device)?;
         self.devices.insert(String::from(device_name), device);
 
         Ok(())

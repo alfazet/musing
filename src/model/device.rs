@@ -18,11 +18,10 @@ use tokio::{
     task::{self, JoinHandle},
 };
 
-use crate::model::decoder::BaseSample;
-
 // after how many ms should we give up waiting for samples and write silence
 const UNDERRUN_THRESHOLD: u64 = 250;
 
+pub type BaseSample = f64;
 trait Sample: FromSample<BaseSample> + SizedSample + Send + 'static {}
 
 impl Sample for i8 {}
@@ -58,7 +57,14 @@ pub struct StreamData {
 
 pub struct Device {
     cpal_device: CpalDevice,
+    config: SupportedStreamConfig,
     state: DeviceState,
+}
+
+// a lightweight struct allowing the decoder to "access" the device
+pub struct ActiveDeviceProxy {
+    pub tx_sample_chunk: cbeam_chan::Sender<Vec<BaseSample>>,
+    pub sample_rate: u32,
 }
 
 impl StreamData {
@@ -67,12 +73,16 @@ impl StreamData {
     }
 }
 
-impl From<CpalDevice> for Device {
-    fn from(cpal_device: CpalDevice) -> Self {
-        Self {
+impl TryFrom<CpalDevice> for Device {
+    type Error = anyhow::Error;
+
+    fn try_from(cpal_device: CpalDevice) -> Result<Self> {
+        let config = cpal_device.default_output_config()?;
+        Ok(Self {
             cpal_device,
+            config,
             state: DeviceState::default(),
-        }
+        })
     }
 }
 
@@ -109,20 +119,15 @@ impl Device {
     }
 
     fn build_cpal_stream(&self, stream_data: StreamData) -> Result<Stream> {
-        let StreamData { sample_rate } = stream_data;
+        // let StreamData { sample_rate } = stream_data;
         let default_config = self.cpal_device.default_output_config()?;
-        let config = StreamConfig {
-            channels: default_config.channels(),
-            sample_rate: SampleRate(sample_rate.unwrap_or(default_config.sample_rate().0)),
-            buffer_size: BufferSize::Default,
-        };
         let (tx_sample_chunk, rx_sample_chunk) = cbeam_chan::bounded(1);
 
         macro_rules! build_output_stream {
             ($type:ty) => {
                 Ok(Stream {
                     cpal_stream: self.cpal_device.build_output_stream(
-                        &config,
+                        &default_config.into(),
                         self.create_data_callback::<$type>(rx_sample_chunk)?,
                         |e| log::error!("playback error ({})", e),
                         None,
@@ -204,5 +209,17 @@ impl Device {
     pub fn stop(&mut self) {
         // this drops the stream (and stops it)
         self.state = DeviceState::Idle;
+    }
+}
+
+impl ActiveDeviceProxy {
+    pub fn try_new(device: &Device) -> Option<Self> {
+        match &device.state {
+            DeviceState::Active(stream) => Some(Self {
+                tx_sample_chunk: stream.tx_sample_chunk.clone(),
+                sample_rate: device.config.sample_rate().0,
+            }),
+            _ => None,
+        }
     }
 }
