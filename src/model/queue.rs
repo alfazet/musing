@@ -131,8 +131,8 @@ impl Queue {
         }
     }
 
-    /// Returns Some(true) if the removed song was currently playing
-    /// Some(false) if not, and None if the song wasn't found.
+    // returns Some(true) if the removed song was currently playing
+    // some(false) if not, and None if the song wasn't found.
     pub fn remove(&mut self, id: u32) -> Option<bool> {
         if let Some(random) = &mut self.random {
             random.ids.retain(|random_id| *random_id != id);
@@ -162,12 +162,12 @@ impl Queue {
         self.history.clear();
         let _ = self.pos.take();
         let _ = self.random.take();
+        self.next_id = 0;
     }
 
+    // TODO: make an enum with modes (normal, random, consume)
     pub fn toggle_random(&mut self) {
-        if let Some(_) = &self.random {
-            let _ = self.random.take();
-        } else {
+        if self.random.is_none() {
             let not_played_ids: Vec<_> = self
                 .list
                 .clone()
@@ -182,6 +182,8 @@ impl Queue {
                 .map(|entry| entry.queue_id)
                 .collect();
             self.random = Some(Random::new(not_played_ids));
+        } else {
+            let _ = self.random.take();
         }
     }
 }

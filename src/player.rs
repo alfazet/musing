@@ -3,7 +3,10 @@ use std::pin::Pin;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::{mpsc, oneshot},
+    sync::{
+        mpsc::{self as tokio_chan},
+        oneshot,
+    },
     task,
 };
 
@@ -12,28 +15,27 @@ use crate::{
     config::PlayerConfig,
     database::Database,
     model::{
+        decoder::Decoder,
         queue::Queue,
-        request::*,
+        request::{self, Request, RequestKind},
         response::Response,
-        song::{PlayerSong, Song},
+        song::{Song, SongEvent},
     },
 };
-
-type ReceiverFromServer = mpsc::UnboundedReceiver<Request>;
-type ReceiverSongOver = mpsc::Receiver<()>;
 
 struct Player {
     queue: Queue,
     database: Database,
     audio: Audio,
-    rx_over: ReceiverSongOver,
+    rx_request: tokio_chan::UnboundedReceiver<Request>,
+    rx_event: tokio_chan::UnboundedReceiver<SongEvent>,
 }
 
 impl Player {
     fn song_by_db_id(&self, db_id: u32) -> Result<&Song> {
         let Some(song) = self.database.song_by_id(db_id) else {
             bail!(format!(
-                "song with db_id `{}` not found in the database",
+                "song with id `{}` not found in the database",
                 db_id
             ));
         };
@@ -43,15 +45,16 @@ impl Player {
 
     fn play(&mut self, db_id: u32) -> Result<()> {
         self.queue.add_current_to_history();
-        let song = self.song_by_db_id(db_id)?.try_into()?;
-        let (tx_over, rx_over) = mpsc::channel(1);
-        self.rx_over = rx_over;
-        self.audio.start(song, tx_over)?;
+        let song = self.song_by_db_id(db_id)?;
+        let decoder = Decoder::try_new(song, false)?;
+        let (tx_event, rx_event) = tokio_chan::unbounded_channel();
+        self.rx_event = rx_event;
+        self.audio.play(decoder, tx_event)?;
 
         Ok(())
     }
 
-    fn move_next_until_ok(&mut self) {
+    fn move_next_until_playable(&mut self) {
         while let Some(entry) = self.queue.move_next() {
             match self.play(entry.db_id) {
                 Ok(_) => break,
@@ -60,7 +63,7 @@ impl Player {
         }
     }
 
-    fn move_prev_until_ok(&mut self) {
+    fn move_prev_until_playable(&mut self) {
         while let Some(entry) = self.queue.move_prev() {
             match self.play(entry.db_id) {
                 Ok(_) => break,
@@ -71,7 +74,9 @@ impl Player {
 
     // database requests are blocking and (mostly) parallelizable,
     // so we send them to rayon's thread pool
-    async fn db_request(&mut self, req: DbRequestKind) -> Response {
+    async fn db_request(&mut self, req: request::DbRequestKind) -> Response {
+        use request::DbRequestKind;
+
         let (tx, rx) = oneshot::channel();
         rayon::scope(|s| {
             s.spawn(|_| {
@@ -93,7 +98,9 @@ impl Player {
         rx.await.unwrap()
     }
 
-    fn playback_request(&mut self, req: PlaybackRequestKind) -> Response {
+    fn playback_request(&mut self, req: request::PlaybackRequestKind) -> Response {
+        use request::{PlaybackRequestKind, SeekArgs, VolumeArgs, VolumeRequest};
+
         match req {
             PlaybackRequestKind::Pause => self.audio.pause().into(),
             PlaybackRequestKind::Resume => self.audio.resume().into(),
@@ -109,10 +116,10 @@ impl Player {
             }
             PlaybackRequestKind::Toggle => self.audio.toggle().into(),
             PlaybackRequestKind::Volume(args) => {
-                let VolumeArgs(volume) = args;
-                match volume {
-                    Volume::Change(x) => self.audio.change_volume(x),
-                    Volume::Set(x) => self.audio.set_volume(x),
+                let VolumeArgs(volume_request) = args;
+                match volume_request {
+                    VolumeRequest::Change(x) => self.audio.change_volume(x),
+                    VolumeRequest::Set(x) => self.audio.set_volume(x),
                 }
 
                 Response::new_ok()
@@ -120,7 +127,9 @@ impl Player {
         }
     }
 
-    fn queue_request(&mut self, req: QueueRequestKind) -> Response {
+    fn queue_request(&mut self, req: request::QueueRequestKind) -> Response {
+        use request::{AddArgs, PlayArgs, QueueRequestKind, RemoveArgs};
+
         match req {
             QueueRequestKind::Add(args) => {
                 let AddArgs(db_ids, insert_pos) = args;
@@ -141,7 +150,7 @@ impl Player {
                 self.audio.stop().into()
             }
             QueueRequestKind::Next => {
-                self.move_next_until_ok();
+                self.move_next_until_playable();
                 if self.queue.current().is_none() {
                     self.queue.reset_pos();
                     let _ = self.audio.stop();
@@ -154,13 +163,13 @@ impl Player {
                 match self.queue.move_to(queue_id) {
                     Some(entry) => self.play(entry.db_id).into(),
                     None => Response::new_err(format!(
-                        "song with queue_id `{}` not found in the queue",
+                        "song with id `{}` not found in the queue",
                         queue_id
                     )),
                 }
             }
             QueueRequestKind::Previous => {
-                self.move_prev_until_ok();
+                self.move_prev_until_playable();
                 if self.queue.current().is_none() {
                     self.queue.reset_pos();
                     let _ = self.audio.stop();
@@ -168,6 +177,7 @@ impl Player {
 
                 Response::new_ok()
             }
+            // TODO: optimize this
             QueueRequestKind::Remove(args) => {
                 let RemoveArgs(queue_ids) = args;
                 for queue_id in queue_ids {
@@ -178,7 +188,7 @@ impl Player {
                         }
                         None => {
                             return Response::new_err(format!(
-                                "song with queue_id `{}` not found in the queue",
+                                "song with id `{}` not found in the queue",
                                 queue_id
                             ));
                         }
@@ -191,7 +201,9 @@ impl Player {
         }
     }
 
-    fn status_request(&self, req: StatusRequestKind) -> Response {
+    fn status_request(&self, req: request::StatusRequestKind) -> Response {
+        use request::StatusRequestKind;
+
         match req {
             StatusRequestKind::Current => match self.queue.current() {
                 Some(entry) => Response::new_ok().with_item("current".into(), &entry),
@@ -221,48 +233,63 @@ impl Player {
         }
     }
 
-    pub fn new(database: Database, audio: Audio) -> Self {
-        let (_, rx_over) = mpsc::channel(1);
+    pub fn new(
+        database: Database,
+        audio: Audio,
+        rx_request: tokio_chan::UnboundedReceiver<Request>,
+    ) -> Self {
+        let queue = Queue::default();
+        let (_, rx_event) = tokio_chan::unbounded_channel();
+
         Self {
-            queue: Queue::default(),
+            queue,
             database,
             audio,
-            rx_over,
+            rx_request,
+            rx_event,
         }
     }
 
-    pub async fn run(&mut self, mut rx: ReceiverFromServer) {
+    pub async fn run(&mut self) -> Result<()> {
         loop {
             tokio::select! {
-                res = rx.recv() => match res {
+                res = self.rx_request.recv() => match res {
                     Some(request) => {
                         let Request { kind, tx_response } = request;
                         let response = self.handle_request(kind).await;
                         let _ = tx_response.send(response);
                     }
-                    // breaks when all client handlers drop
-                    None => break,
+                    // breaks when all client handlers go out of scope
+                    None => break Ok(()),
                 },
-                Some(_) = self.rx_over.recv() => {
-                    self.move_next_until_ok();
-                    if self.queue.current().is_none() {
-                        self.queue.reset_pos();
-                        let _ = self.audio.stop();
+                Some(event) = self.rx_event.recv() => match event {
+                    SongEvent::Over => {
+                        self.move_next_until_playable();
+                        if self.queue.current().is_none() {
+                            self.queue.reset_pos();
+                            let _ = self.audio.stop();
+                        }
                     }
                 },
-                else => break
+                else => break Ok(())
             }
         }
     }
 }
 
-pub async fn run(player_config: PlayerConfig, rx: ReceiverFromServer) -> Result<()> {
+pub async fn run(
+    config: PlayerConfig,
+    rx_request: tokio_chan::UnboundedReceiver<Request>,
+) -> Result<()> {
     let PlayerConfig {
-        default_audio_device,
+        default_device,
         music_dir,
         allowed_exts,
-    } = player_config;
-    let audio = Audio::new().with_default(default_audio_device.as_str())?;
+    } = config;
+
+    let audio = Audio::new().with_default(default_device.as_str())?;
+    // creating the db is blocking and parallelizable,
+    // so we delegate it to rayon's thread pool
     let database = {
         let (tx, rx) = oneshot::channel();
         rayon::spawn(move || {
@@ -270,8 +297,7 @@ pub async fn run(player_config: PlayerConfig, rx: ReceiverFromServer) -> Result<
         });
         rx.await?
     }?;
-    let mut player = Player::new(database, audio);
-    player.run(rx).await;
+    let mut player = Player::new(database, audio, rx_request);
 
-    Ok(())
+    player.run().await
 }

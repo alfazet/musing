@@ -4,7 +4,10 @@ use std::fmt::{self, Display, Formatter};
 use unidecode::unidecode;
 
 use crate::{
-    model::{song::*, tag_key::TagKey},
+    model::{
+        song::{Metadata, Song},
+        tag_key::TagKey,
+    },
     parsers::filter as parser,
 };
 
@@ -25,6 +28,7 @@ struct NullFilter; // matches everything
 // TODO: FuzzyFilter based on edit distance
 // TODO: ignore caps by default
 
+#[derive(Debug)]
 pub enum FilterExprOperator {
     OpAnd,
     OpOr,
@@ -41,7 +45,7 @@ pub struct FilterExpr {
 
 impl Filter for RegexFilter {
     fn matches(&self, song: &Song) -> bool {
-        match song.song_meta.get(&self.tag) {
+        match song.metadata.get(&self.tag) {
             Some(value) => {
                 let v = self.regex.is_match(&unidecode(value));
                 if self.inverted { !v } else { v }

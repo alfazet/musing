@@ -15,7 +15,7 @@ use crate::model::{
     filter::FilterExpr,
     request::{MetadataArgs, SelectArgs, UniqueArgs},
     response::Response,
-    song::*,
+    song::{Metadata, Song},
     tag_key::TagKey,
 };
 
@@ -44,7 +44,7 @@ impl Database {
                     to_delete: false,
                 }),
                 Err(e) => {
-                    log::warn!(
+                    log::error!(
                         "could not read any audio from {} ({})",
                         file.to_string_lossy(),
                         e
@@ -85,7 +85,7 @@ impl Database {
         }
     }
 
-    /// Get values of `tags` for songs with `ids`.
+    // get values of `tags` for songs with `ids`
     pub fn metadata(&self, MetadataArgs(ids, tags): MetadataArgs) -> Response {
         let values: Vec<_> = ids
             .into_par_iter()
@@ -94,7 +94,7 @@ impl Database {
                     .binary_search_by_key(&id, |row| row.id)
                     .map(|i| {
                         let data = tags.iter().cloned().map(|tag| {
-                            let value = self.data_rows[i].song.song_meta.get(&tag).into();
+                            let value = self.data_rows[i].song.metadata.get(&tag).into();
                             (tag.to_string(), value)
                         });
 
@@ -107,9 +107,9 @@ impl Database {
         Response::new_ok().with_item("values".into(), &values)
     }
 
-    /// Get ids of songs matching `filter_expr`, sorted by the comparators in `sort_by`.
+    // get ids of songs matching `filter_expr`, sorted by the comparators in `sort_by`
     fn select(&self, filter_expr: FilterExpr, sort_by: Vec<Comparator>) -> Vec<u32> {
-        let compare = |lhs: &SongMeta, rhs: &SongMeta| -> Ordering {
+        let compare = |lhs: &Metadata, rhs: &Metadata| -> Ordering {
             sort_by
                 .iter()
                 .map(|cmp| cmp.cmp(lhs, rhs))
@@ -122,30 +122,28 @@ impl Database {
             .par_iter()
             .filter(|row| filter_expr.evaluate(&row.song))
             .collect();
-        filtered.par_sort_by(|lhs, rhs| compare(&lhs.song.song_meta, &rhs.song.song_meta));
+        filtered.par_sort_by(|lhs, rhs| compare(&lhs.song.metadata, &rhs.song.metadata));
 
         filtered.into_par_iter().map(|row| row.id).collect()
     }
 
-    /// ("inner" because this returns a Vec "inside" = to other rustmpd functions)
     pub fn select_inner(&self, SelectArgs(filter_expr, sort_by): SelectArgs) -> Vec<u32> {
         self.select(filter_expr, sort_by)
     }
 
-    /// ("outer" because this returns JSON "outside" = to the client)
     pub fn select_outer(&self, SelectArgs(filter_expr, sort_by): SelectArgs) -> Response {
         let ids = self.select(filter_expr, sort_by);
         Response::new_ok().with_item("ids".into(), &ids)
     }
 
-    /// Get unique values of `tag` among songs matching `filter_expr`, grouped by tags in `group_by`.
+    // get unique values of `tag` among songs matching `filter_expr`, grouped by tags in `group_by`
     pub fn unique(&self, UniqueArgs(tag, group_by, filter_expr): UniqueArgs) -> Response {
         let mut groups = HashMap::new();
         let filtered = self
             .data_rows
             .iter()
             .filter(|row| filter_expr.evaluate(&row.song))
-            .map(|row| &row.song.song_meta);
+            .map(|row| &row.song.metadata);
         for meta in filtered {
             let combination: Vec<_> = group_by
                 .iter()

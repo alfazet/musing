@@ -3,23 +3,23 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     signal,
-    sync::{broadcast, mpsc, oneshot},
+    sync::{
+        broadcast,
+        mpsc::{self as tokio_chan},
+        oneshot,
+    },
 };
 
 use crate::{
-    config::{Config, ServerConfig},
-    model::{request::*, response::Response},
-    player,
+    config::ServerConfig,
+    model::{
+        request::{Request, RequestKind},
+        response::Response,
+    },
 };
-
-type SenderToPlayer = mpsc::UnboundedSender<Request>;
-type ShutdownSender = broadcast::Sender<()>;
-type ShutdownReceiver = broadcast::Receiver<()>;
 
 struct ClientHandler {
     stream: BufReader<TcpStream>,
-    tx: SenderToPlayer,
-    rx_shutdown: ShutdownReceiver,
 }
 
 struct Server {
@@ -27,24 +27,25 @@ struct Server {
 }
 
 impl ClientHandler {
-    pub fn new(stream: TcpStream, tx: SenderToPlayer, rx_shutdown: ShutdownReceiver) -> Self {
-        let stream = BufReader::new(stream);
+    pub fn new(stream: TcpStream) -> Self {
         Self {
-            stream,
-            tx,
-            rx_shutdown,
+            stream: BufReader::new(stream),
         }
     }
 
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn run(
+        &mut self,
+        tx_request: tokio_chan::UnboundedSender<Request>,
+        mut rx_shutdown: broadcast::Receiver<()>,
+    ) -> Result<()> {
         self.stream
-            .write_all(format!("rustmpd v{}\n", env!("CARGO_PKG_VERSION")).as_bytes())
+            .write_all(format!("musing v{}\n", env!("CARGO_PKG_VERSION")).as_bytes())
             .await?;
         loop {
             // read the length (2 bytes, big endian)
             let res = tokio::select! {
                 res = self.stream.read_u16() => res,
-                _ = self.rx_shutdown.recv() => break,
+                _ = rx_shutdown.recv() => break,
             };
             let Ok(len) = res else {
                 let _ = self.stream.shutdown().await;
@@ -55,17 +56,17 @@ impl ClientHandler {
             let mut buf = vec![0; len as usize];
             let res = tokio::select! {
                 res = self.stream.read_exact(&mut buf) => res,
-                _ = self.rx_shutdown.recv() => break,
+                _ = rx_shutdown.recv() => break,
             };
-            if let Err(_) = res {
+            if res.is_err() {
                 let _ = self.stream.shutdown().await;
                 break;
             }
             let s = String::from_utf8(buf)?;
             let response = match RequestKind::try_from(s.as_str()) {
-                Ok(request_kind) => {
+                Ok(kind) => {
                     let (tx_response, rx_response) = oneshot::channel();
-                    let _ = self.tx.send(Request::new(request_kind, tx_response));
+                    let _ = tx_request.send(Request { kind, tx_response });
                     rx_response.await?.into_json_string()?
                 }
                 Err(e) => Response::new_err(e.to_string()).into_json_string()?,
@@ -83,35 +84,38 @@ impl Server {
         Self { port }
     }
 
-    pub async fn run(&self, tx: SenderToPlayer, tx_shutdown: ShutdownSender) -> Result<()> {
+    pub async fn run(
+        &self,
+        tx_request: tokio_chan::UnboundedSender<Request>,
+        tx_shutdown: broadcast::Sender<()>,
+    ) -> Result<()> {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", self.port)).await?;
         loop {
             let (stream, _) = listener.accept().await?;
-            let tx_ = tx.clone();
+            let tx_request_ = tx_request.clone();
             let rx_shutdown = tx_shutdown.subscribe();
             tokio::spawn(async move {
-                let mut client_handler = ClientHandler::new(stream, tx_, rx_shutdown);
-                if let Err(e) = client_handler.run().await {
-                    log::error!("network error ({})", e);
+                let mut client_handler = ClientHandler::new(stream);
+                if let Err(e) = client_handler.run(tx_request_, rx_shutdown).await {
+                    log::error!("client handler error ({})", e);
                 }
             });
         }
     }
 }
 
-pub async fn run(config: Config) -> Result<()> {
-    let Config {
-        server_config,
-        player_config,
-    } = config;
-    let (tx, rx) = mpsc::unbounded_channel();
+pub async fn run(
+    config: ServerConfig,
+    tx_request: tokio_chan::UnboundedSender<Request>,
+) -> Result<()> {
+    // the "shutdown" channel keeps one sender and many receivers
+    // each client handler gets its own receiver
+    // the only sender gets dropped whenever the server stops
+    //
+    // after that happens, all client handlers will error out
+    // of any attempt to receive on the channel, which tells them to shut down
     let (tx_shutdown, _) = broadcast::channel(1);
-    let server = Server::new(server_config);
-    let player_task = tokio::spawn(async move { player::run(player_config, rx).await });
-    let res = tokio::select! {
-        res = server.run(tx, tx_shutdown) => res,
-        res = player_task => res?,
-    };
+    let server = Server::new(config);
 
-    res
+    server.run(tx_request, tx_shutdown).await
 }
