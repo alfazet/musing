@@ -18,13 +18,13 @@ mod parsers;
 
 fn setup_logging(cli_opts: &CliOptions) {
     if cli_opts.log_stderr {
-        simple_logging::log_to_stderr(log::LevelFilter::Warn);
+        simple_logging::log_to_stderr(log::LevelFilter::Error);
     } else {
         let default_log_file = dirs::cache_dir()
             .unwrap_or(dirs::home_dir().unwrap())
             .join(constants::DEFAULT_LOG_FILE);
         let log_file = cli_opts.log_file.as_deref().unwrap_or(&default_log_file);
-        let _ = simple_logging::log_to_file(log_file, log::LevelFilter::Warn);
+        let _ = simple_logging::log_to_file(log_file, log::LevelFilter::Error);
     }
 }
 

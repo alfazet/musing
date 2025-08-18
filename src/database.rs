@@ -44,7 +44,7 @@ impl Database {
                     to_delete: false,
                 }),
                 Err(e) => {
-                    log::warn!(
+                    log::error!(
                         "could not read any audio from {} ({})",
                         file.to_string_lossy(),
                         e
@@ -127,12 +127,10 @@ impl Database {
         filtered.into_par_iter().map(|row| row.id).collect()
     }
 
-    // ("inner" because this returns a Vec "inside" = to other rustmpd functions)
     pub fn select_inner(&self, SelectArgs(filter_expr, sort_by): SelectArgs) -> Vec<u32> {
         self.select(filter_expr, sort_by)
     }
 
-    // ("outer" because this returns JSON "outside" = to the client)
     pub fn select_outer(&self, SelectArgs(filter_expr, sort_by): SelectArgs) -> Response {
         let ids = self.select(filter_expr, sort_by);
         Response::new_ok().with_item("ids".into(), &ids)

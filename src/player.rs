@@ -106,7 +106,7 @@ impl Player {
             PlaybackRequestKind::Resume => self.audio.resume().into(),
             PlaybackRequestKind::Seek(args) => {
                 let SeekArgs(secs) = args;
-                // self.audio.seek(secs);
+                self.audio.seek(secs);
 
                 Response::new_ok()
             }
@@ -210,8 +210,7 @@ impl Player {
                 None => Response::new_err("no song is playing right now".into()),
             },
             StatusRequestKind::Elapsed => {
-                // Response::new_ok().with_item("elapsed".into(), &self.audio.elapsed())
-                Response::new_ok()
+                Response::new_ok().with_item("elapsed".into(), &self.audio.elapsed())
             }
             StatusRequestKind::Queue => {
                 Response::new_ok().with_item("queue".into(), &self.queue.as_inner())
@@ -283,12 +282,12 @@ pub async fn run(
     rx_request: tokio_chan::UnboundedReceiver<Request>,
 ) -> Result<()> {
     let PlayerConfig {
-        default_audio_device,
+        default_device,
         music_dir,
         allowed_exts,
     } = config;
 
-    let audio = Audio::new().with_default(default_audio_device.as_str())?;
+    let audio = Audio::new().with_default(default_device.as_str())?;
     // creating the db is blocking and parallelizable,
     // so we delegate it to rayon's thread pool
     let database = {

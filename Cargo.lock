@@ -579,6 +579,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "musing"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "cpal",
+ "crossbeam-channel",
+ "dirs",
+ "erased-serde",
+ "jwalk",
+ "lazy_static",
+ "log",
+ "rand",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_json",
+ "simple-logging",
+ "symphonia",
+ "thiserror 2.0.12",
+ "tokio",
+ "unidecode",
+]
+
+[[package]]
 name = "ndk"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -902,31 +927,6 @@ name = "rustc-demangle"
 version = "0.1.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56f7d92ca342cea22a06f2121d944b4fd82af56988c270852495420f961d4ace"
-
-[[package]]
-name = "rustmpd"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "cpal",
- "crossbeam-channel",
- "dirs",
- "erased-serde",
- "jwalk",
- "lazy_static",
- "log",
- "rand",
- "rayon",
- "regex",
- "serde",
- "serde_json",
- "simple-logging",
- "symphonia",
- "thiserror 2.0.12",
- "tokio",
- "unidecode",
-]
 
 [[package]]
 name = "rustversion"

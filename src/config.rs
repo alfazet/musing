@@ -7,15 +7,19 @@ use crate::constants;
 #[derive(Parser, Debug)]
 #[command(version, about, author, long_about = None)]
 pub struct CliOptions {
-    /// Port on which rustmpd will listen for clients.
+    /// Port on which musing will listen for clients.
     #[arg(short = 'p', long = "port")]
     pub port: Option<u16>,
 
-    /// Path to the music directory, all paths will be processed as relative to it.
+    /// The name of the default audio device to use.
+    #[arg(short = 'd', long = "device")]
+    pub default_device: Option<String>,
+
+    /// Path to the directory containing the music files.
     #[arg(short = 'm', long = "music")]
     pub music_dir: Option<PathBuf>,
 
-    /// Path to the rustmpd.toml config file.
+    /// Path to the musing.toml config file.
     #[arg(short = 'c', long = "config")]
     pub config_file: Option<PathBuf>,
 
@@ -23,7 +27,7 @@ pub struct CliOptions {
     #[arg(short = 'l', long = "log")]
     pub log_file: Option<PathBuf>,
 
-    /// Log to stderr instead
+    /// Print logs to stderr.
     #[arg(long = "stderr")]
     pub log_stderr: bool,
 }
@@ -35,7 +39,7 @@ pub struct ServerConfig {
 
 #[derive(Debug)]
 pub struct PlayerConfig {
-    pub default_audio_device: String,
+    pub default_device: String,
     pub music_dir: PathBuf,
     pub allowed_exts: Vec<String>,
 }
@@ -59,7 +63,7 @@ impl ServerConfig {}
 impl Default for PlayerConfig {
     fn default() -> Self {
         Self {
-            default_audio_device: constants::DEFAULT_AUDIO_DEVICE.to_string(),
+            default_device: constants::DEFAULT_DEVICE.to_string(),
             music_dir: constants::DEFAULT_MUSIC_DIR.into(),
             allowed_exts: constants::DEFAULT_ALLOWED_EXTS
                 .into_iter()
@@ -91,6 +95,9 @@ impl Config {
             ..self.server_config
         };
         let player_config = PlayerConfig {
+            default_device: cli_opts
+                .default_device
+                .unwrap_or(self.player_config.default_device),
             music_dir: cli_opts.music_dir.unwrap_or(self.player_config.music_dir),
             ..self.player_config
         };

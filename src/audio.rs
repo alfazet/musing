@@ -19,7 +19,7 @@ use tokio::{
 };
 
 use crate::model::{
-    decoder::{BaseSample, Decoder, DecoderRequest, Volume},
+    decoder::{BaseSample, Decoder, DecoderRequest, Seek, Volume},
     device::{Device, StreamData},
     song::{Song, SongEvent},
 };
@@ -70,12 +70,12 @@ impl Audio {
     ) -> Result<()> {
         let volume = Arc::clone(&self.playback.volume);
         let elapsed = Arc::clone(&self.playback.elapsed);
+        {
+            *elapsed.write().unwrap() = 0;
+        }
+
         let (tx_request, rx_request) = crossbeam_channel::unbounded();
         let sample_rate = decoder.sample_rate();
-        self.decoder_data = Some(DecoderData {
-            sample_rate,
-            tx_request,
-        });
         let stream_data = StreamData::new(sample_rate);
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.play(stream_data)?;
@@ -86,6 +86,10 @@ impl Audio {
             if let Err(e) = decoder.run(devices_txs, tx_event, rx_request, volume, elapsed) {
                 log::error!("decoder error ({})", e);
             }
+        });
+        self.decoder_data = Some(DecoderData {
+            sample_rate,
+            tx_request,
         });
         self.playback.state = PlaybackState::Playing;
 
@@ -176,12 +180,23 @@ impl Audio {
         }
     }
 
+    pub fn seek(&mut self, secs: i64) {
+        if let Some(tx) = self.decoder_data.as_ref().map(|d| &d.tx_request) {
+            let seek = if secs > 0 {
+                Seek::Forwards(secs.unsigned_abs())
+            } else {
+                Seek::Backwards(secs.unsigned_abs())
+            };
+            let _ = tx.send(DecoderRequest::Seek(seek));
+        }
+    }
+
     pub fn change_volume(&mut self, delta: i8) {
         let mut v_lock = self.playback.volume.write().unwrap();
         let v: u8 = (*v_lock).into();
         // TODO: clean up when
         // https://doc.rust-lang.org/std/primitive.u8.html#method.saturating_sub_signed
-        // stablizies
+        // stabilizes
         *v_lock = {
             if delta < 0 {
                 v.saturating_sub(delta.unsigned_abs())
@@ -200,6 +215,10 @@ impl Audio {
         (*self.playback.volume.read().unwrap()).into()
     }
 
+    pub fn elapsed(&self) -> u64 {
+        *self.playback.elapsed.read().unwrap()
+    }
+
     pub fn state(&self) -> u8 {
         self.playback.state as u8
     }
@@ -210,8 +229,25 @@ mod audio_utils {
 
     pub fn get_device_by_name(device_name: &str) -> Result<CpalDevice> {
         let host = cpal::default_host();
-        host.output_devices()?
+        match host
+            .output_devices()?
             .find(|x| x.name().map(|s| s == device_name).unwrap_or(false))
-            .ok_or(anyhow!("audio device `{}` unavailable", device_name))
+        {
+            Some(device) => Ok(device),
+            None => {
+                let mut err_msg = format!(
+                    "audio device `{}` unavailable, available devices: ",
+                    device_name
+                );
+                for name in host
+                    .output_devices()?
+                    .map(|d| d.name().unwrap_or("[unnamed]".into()))
+                {
+                    err_msg += &name;
+                    err_msg.push(',');
+                }
+                bail!(err_msg)
+            }
+        }
     }
 }

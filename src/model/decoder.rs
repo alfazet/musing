@@ -9,10 +9,11 @@ use symphonia::core::{
     codecs::{Decoder as SymphoniaDecoder, DecoderOptions as SymphoniaDecoderOptions},
     conv::ConvertibleSample,
     errors::Error as SymphoniaError,
-    formats::{FormatOptions, FormatReader, Track},
+    formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track},
     io::MediaSourceStream,
     meta::{self, Metadata, MetadataOptions, MetadataRevision},
     probe::{Hint, ProbeResult, ProbedMetadata},
+    units::Time,
 };
 use tokio::{
     sync::mpsc::{self as tokio_chan},
@@ -49,15 +50,16 @@ impl Default for Volume {
     }
 }
 
+// TODO: seek forwards, backwards and percentage (e.g. 50% = to the middle of the song)
 #[derive(Debug)]
-pub enum SeekDirection {
-    Forward,
-    Backward,
+pub enum Seek {
+    Forwards(u64),
+    Backwards(u64),
 }
 
 #[derive(Debug)]
 pub enum DecoderRequest {
-    Seek(u64, SeekDirection),
+    Seek(Seek),
 }
 
 pub struct Decoder {
@@ -109,10 +111,29 @@ impl Decoder {
             true
         };
 
+        let time_base = self.decoder.codec_params().time_base;
+        let mut prev_elapsed: u64 = 0;
         let mut chunk = Vec::new();
         loop {
             match rx_request.try_recv() {
-                Ok(request) => log::warn!("{:?}", request),
+                Ok(request) => match request {
+                    DecoderRequest::Seek(seek) => {
+                        let target_elapsed = match seek {
+                            Seek::Forwards(secs) => prev_elapsed.saturating_add(secs),
+                            Seek::Backwards(secs) => prev_elapsed.saturating_sub(secs),
+                        };
+                        let target_time = Time {
+                            seconds: target_elapsed,
+                            frac: 0.0,
+                        };
+                        let seek_to = SeekTo::Time {
+                            time: target_time,
+                            track_id: Some(self.track_id),
+                        };
+                        let _ = self.demuxer.seek(SeekMode::Coarse, seek_to);
+                        self.decoder.reset();
+                    }
+                },
                 // the player went out of scope (due to an error or a Ctrl+C)
                 Err(TryRecvError::Disconnected) => return Ok(()),
                 _ => (),
@@ -127,6 +148,13 @@ impl Decoder {
                             chunk.extend_from_slice(buf.samples());
                             if chunk.len() >= CHUNK_SIZE && !send_chunk(mem::take(&mut chunk)) {
                                 return Ok(());
+                            }
+                            if let Some(time_base) = time_base {
+                                let new_elapsed = time_base.calc_time(packet.ts).seconds;
+                                if new_elapsed != prev_elapsed {
+                                    *elapsed.write().unwrap() = new_elapsed;
+                                    prev_elapsed = new_elapsed;
+                                }
                             }
                         }
                         Err(e) => match e {

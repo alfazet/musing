@@ -162,8 +162,10 @@ impl Queue {
         self.history.clear();
         let _ = self.pos.take();
         let _ = self.random.take();
+        self.next_id = 0;
     }
 
+    // TODO: make an enum with modes (normal, random, consume)
     pub fn toggle_random(&mut self) {
         if self.random.is_none() {
             let not_played_ids: Vec<_> = self

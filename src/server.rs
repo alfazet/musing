@@ -39,7 +39,7 @@ impl ClientHandler {
         mut rx_shutdown: broadcast::Receiver<()>,
     ) -> Result<()> {
         self.stream
-            .write_all(format!("rustmpd v{}\n", env!("CARGO_PKG_VERSION")).as_bytes())
+            .write_all(format!("musing v{}\n", env!("CARGO_PKG_VERSION")).as_bytes())
             .await?;
         loop {
             // read the length (2 bytes, big endian)

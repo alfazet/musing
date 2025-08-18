@@ -29,7 +29,7 @@ pub enum DbRequestKind {
     Update,
 }
 
-pub struct SeekArgs(pub i32); // in seconds
+pub struct SeekArgs(pub i64); // in seconds
 pub struct VolumeArgs(pub VolumeRequest);
 pub enum PlaybackRequestKind {
     Pause,
@@ -152,7 +152,7 @@ impl TryFrom<&[String]> for SeekArgs {
         if args.is_empty() {
             bail!("invalid arguments to `seek`");
         }
-        let secs = args[0].parse::<i32>()?;
+        let secs = args[0].parse::<i64>()?;
 
         Ok(Self(secs))
     }
