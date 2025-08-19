@@ -85,6 +85,14 @@ impl Database {
         }
     }
 
+    // TODO:
+    // get ids of songs located in `path`, if `path` is a file (present in the databse) returns
+    // its song id
+    // (should be parallelizable since it's just a filter)
+    // pub fn ls(&self, LsArgs(path): LsArgs) -> Response {
+    //
+    // }
+
     // get values of `tags` for songs with `ids`
     pub fn metadata(&self, MetadataArgs(ids, tags): MetadataArgs) -> Response {
         let values: Vec<_> = ids
@@ -113,7 +121,7 @@ impl Database {
             sort_by
                 .iter()
                 .map(|cmp| cmp.cmp(lhs, rhs))
-                .find(|ord| *ord != Ordering::Equal)
+                .find(|&ord| ord != Ordering::Equal)
                 .unwrap_or(Ordering::Equal)
         };
 

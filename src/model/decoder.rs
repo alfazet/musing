@@ -29,7 +29,6 @@ use crate::model::{
 const BASE_SAMPLE_MIN: BaseSample = -1.0;
 const BASE_SAMPLE_MAX: BaseSample = 1.0;
 const MAX_VOLUME: u8 = 100;
-const CHUNK_SIZE: usize = 1;
 
 #[derive(Clone, Copy)]
 pub struct Volume(u8);
@@ -91,7 +90,6 @@ impl Decoder {
     pub fn run(
         &mut self,
         proxies: Vec<ActiveDeviceProxy>,
-        tx_event: tokio_chan::UnboundedSender<SongEvent>,
         rx_request: cbeam_chan::Receiver<DecoderRequest>,
         volume: Arc<RwLock<Volume>>,
         elapsed: Arc<RwLock<u64>>,
@@ -121,9 +119,10 @@ impl Decoder {
                 };
                 for s in samples
                     .iter()
-                    .map(|s| (*s * mult).clamp(BASE_SAMPLE_MIN, BASE_SAMPLE_MAX))
+                    .map(|&s| (s * mult).clamp(BASE_SAMPLE_MIN, BASE_SAMPLE_MAX))
                 {
                     if proxy.tx_sample.send(s).is_err() {
+                        // a closed channel means the audio task ended
                         return false;
                     }
                 }
@@ -205,6 +204,10 @@ impl Decoder {
                         if matches!(e.kind(), io::ErrorKind::UnexpectedEof) =>
                     {
                         // the entire song has been processed
+                        for proxy in proxies.iter() {
+                            let _ = proxy.tx_sample.send(BaseSample::NAN);
+                        }
+                        *elapsed.write().unwrap() = 0;
                         break;
                     }
                     _ => bail!(e),
@@ -212,7 +215,6 @@ impl Decoder {
                 _ => (),
             }
         }
-        let _ = tx_event.send(SongEvent::Over);
 
         Ok(())
     }

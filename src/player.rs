@@ -47,9 +47,7 @@ impl Player {
         self.queue.add_current_to_history();
         let song = self.song_by_db_id(db_id)?;
         let decoder = Decoder::try_new(song, false)?;
-        let (tx_event, rx_event) = tokio_chan::unbounded_channel();
-        self.rx_event = rx_event;
-        self.audio.play(decoder, tx_event)?;
+        self.audio.play(decoder)?;
 
         Ok(())
     }
@@ -237,12 +235,10 @@ impl Player {
         database: Database,
         audio: Audio,
         rx_request: tokio_chan::UnboundedReceiver<Request>,
+        rx_event: tokio_chan::UnboundedReceiver<SongEvent>,
     ) -> Self {
-        let queue = Queue::default();
-        let (_, rx_event) = tokio_chan::unbounded_channel();
-
         Self {
-            queue,
+            queue: Queue::default(),
             database,
             audio,
             rx_request,
@@ -287,7 +283,8 @@ pub async fn run(
         allowed_exts,
     } = config;
 
-    let audio = Audio::new().with_default(default_device.as_str())?;
+    let (tx_event, rx_event) = tokio_chan::unbounded_channel();
+    let audio = Audio::new(tx_event).with_default(default_device.as_str())?;
     // creating the db is blocking and parallelizable,
     // so we delegate it to rayon's thread pool
     let database = {
@@ -297,7 +294,7 @@ pub async fn run(
         });
         rx.await?
     }?;
-    let mut player = Player::new(database, audio, rx_request);
+    let mut player = Player::new(database, audio, rx_request, rx_event);
 
     player.run().await
 }

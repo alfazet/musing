@@ -18,8 +18,7 @@ use tokio::{
     task::{self, JoinHandle},
 };
 
-// after how many ms should we give up waiting for samples and write silence
-const UNDERRUN_THRESHOLD: u64 = 250;
+use crate::model::song::SongEvent;
 
 pub type BaseSample = f64;
 trait Sample: FromSample<BaseSample> + SizedSample + Send + 'static {}
@@ -48,13 +47,6 @@ enum DeviceState {
     Active(Stream),
 }
 
-// data that's required to setup a new device to
-// play the current stream
-#[derive(Clone, Copy)]
-pub struct StreamData {
-    sample_rate: Option<u32>,
-}
-
 pub struct Device {
     cpal_device: CpalDevice,
     config: SupportedStreamConfig,
@@ -65,12 +57,6 @@ pub struct Device {
 pub struct ActiveDeviceProxy {
     pub tx_sample: cbeam_chan::Sender<BaseSample>,
     pub sample_rate: u32,
-}
-
-impl StreamData {
-    pub fn new(sample_rate: Option<u32>) -> Self {
-        Self { sample_rate }
-    }
 }
 
 impl TryFrom<CpalDevice> for Device {
@@ -90,6 +76,7 @@ impl Device {
     fn create_data_callback<T>(
         &self,
         rx_sample: cbeam_chan::Receiver<BaseSample>,
+        tx_event: tokio_chan::UnboundedSender<SongEvent>,
     ) -> Result<impl FnMut(&mut [T], &OutputCallbackInfo) + Send + 'static>
     where
         T: Sample,
@@ -97,6 +84,11 @@ impl Device {
         let callback = move |data: &mut [T], _: &OutputCallbackInfo| {
             let mut i = 0;
             while let Ok(s) = rx_sample.try_recv() {
+                // NAN == the end of this song
+                if s.is_nan() {
+                    let _ = tx_event.send(SongEvent::Over);
+                    break;
+                }
                 data[i] = T::from_sample(s);
                 i += 1;
                 if i >= data.len() {
@@ -109,19 +101,21 @@ impl Device {
         Ok(callback)
     }
 
-    fn build_cpal_stream(&self, stream_data: StreamData) -> Result<Stream> {
-        // let StreamData { sample_rate } = stream_data;
-        let config = self.cpal_device.default_output_config()?;
-        // buffer up to 1s of audio
-        let (tx_sample, rx_sample) =
-            cbeam_chan::bounded(config.channels() as usize * config.sample_rate().0 as usize);
+    fn build_stream(&self, tx_event: tokio_chan::UnboundedSender<SongEvent>) -> Result<Stream> {
+        // buffer 100 ms of audio
+        // too little buffering forces the decoder to pause frequently,
+        // and too much causes considerable delays on volume changes and seeks
+        // 100 ms seems to be a decent middle ground
+        let (tx_sample, rx_sample) = cbeam_chan::bounded(
+            self.config.channels() as usize * self.config.sample_rate().0 as usize / 10,
+        );
 
         macro_rules! build_output_stream {
             ($type:ty) => {
                 Ok(Stream {
                     cpal_stream: self.cpal_device.build_output_stream(
-                        &config.into(),
-                        self.create_data_callback::<$type>(rx_sample)?,
+                        &self.config.clone().into(),
+                        self.create_data_callback::<$type>(rx_sample, tx_event)?,
                         |e| log::error!("playback error ({})", e),
                         None,
                     )?,
@@ -131,7 +125,7 @@ impl Device {
         }
 
         use SampleFormat::*;
-        match config.sample_format() {
+        match self.config.sample_format() {
             I8 => build_output_stream!(i8),
             I16 => build_output_stream!(i16),
             I32 => build_output_stream!(i32),
@@ -150,12 +144,14 @@ impl Device {
         !matches!(self.state, DeviceState::Disabled)
     }
 
-    pub fn enable(&mut self, stream_data: Option<StreamData>) -> Result<()> {
+    pub fn enable(
+        &mut self,
+        tx_event: Option<tokio_chan::UnboundedSender<SongEvent>>,
+    ) -> Result<()> {
         if matches!(self.state, DeviceState::Disabled) {
-            // give the current stream to the new device so it can join in
             self.state = DeviceState::Idle;
-            if let Some(stream_data) = stream_data {
-                self.play(stream_data)?;
+            if let Some(tx_event) = tx_event {
+                self.play(tx_event)?;
             }
         }
 
@@ -167,8 +163,8 @@ impl Device {
         self.state = DeviceState::Disabled;
     }
 
-    pub fn play(&mut self, stream_data: StreamData) -> Result<()> {
-        let stream = self.build_cpal_stream(stream_data)?;
+    pub fn play(&mut self, tx_event: tokio_chan::UnboundedSender<SongEvent>) -> Result<()> {
+        let stream = self.build_stream(tx_event)?;
         match stream.cpal_stream.play() {
             Ok(_) => {
                 self.state = DeviceState::Active(stream);
@@ -193,7 +189,7 @@ impl Device {
     }
 
     pub fn stop(&mut self) {
-        // this drops the stream (and stops it)
+        // this drops the stream
         self.state = DeviceState::Idle;
     }
 }

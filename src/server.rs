@@ -42,9 +42,9 @@ impl ClientHandler {
             .write_all(format!("musing v{}\n", env!("CARGO_PKG_VERSION")).as_bytes())
             .await?;
         loop {
-            // read the length (2 bytes, big endian)
+            // read the length (4 bytes, big endian)
             let res = tokio::select! {
-                res = self.stream.read_u16() => res,
+                res = self.stream.read_u32() => res,
                 _ = rx_shutdown.recv() => break,
             };
             let Ok(len) = res else {

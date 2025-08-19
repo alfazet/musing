@@ -20,7 +20,7 @@ use tokio::{
 
 use crate::model::{
     decoder::{Decoder, DecoderRequest, Seek, Volume},
-    device::{ActiveDeviceProxy, BaseSample, Device, StreamData},
+    device::{ActiveDeviceProxy, BaseSample, Device},
     song::{Song, SongEvent},
 };
 
@@ -39,21 +39,21 @@ struct Playback {
     elapsed: Arc<RwLock<u64>>,
 }
 
-struct DecoderData {
-    sample_rate: Option<u32>,
-    tx_request: cbeam_chan::Sender<DecoderRequest>,
-}
-
-#[derive(Default)]
 pub struct Audio {
     playback: Playback,
     devices: HashMap<String, Device>,
-    decoder_data: Option<DecoderData>,
+    tx_request: Option<cbeam_chan::Sender<DecoderRequest>>,
+    tx_event: tokio_chan::UnboundedSender<SongEvent>,
 }
 
 impl Audio {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(tx_event: tokio_chan::UnboundedSender<SongEvent>) -> Self {
+        Self {
+            playback: Playback::default(),
+            devices: HashMap::new(),
+            tx_request: None,
+            tx_event,
+        }
     }
 
     pub fn with_default(mut self, default_device_name: &str) -> Result<Self> {
@@ -63,37 +63,28 @@ impl Audio {
         Ok(self)
     }
 
-    pub fn play(
-        &mut self,
-        mut decoder: Decoder,
-        tx_event: tokio_chan::UnboundedSender<SongEvent>,
-    ) -> Result<()> {
+    pub fn play(&mut self, mut decoder: Decoder) -> Result<()> {
         let volume = Arc::clone(&self.playback.volume);
         let elapsed = Arc::clone(&self.playback.elapsed);
-        {
-            *elapsed.write().unwrap() = 0;
-        }
-
         let (tx_request, rx_request) = crossbeam_channel::unbounded();
         let sample_rate = decoder.sample_rate();
-        let stream_data = StreamData::new(sample_rate);
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
-            device.play(stream_data)?;
+            device.play(self.tx_event.clone())?;
         }
         let device_proxies: Vec<_> = self
             .devices
             .values()
-            .filter_map(|d| ActiveDeviceProxy::try_new(d))
+            .filter_map(ActiveDeviceProxy::try_new)
             .collect();
+        if device_proxies.is_empty() {
+            bail!("playback error (all audio devices are disabled)");
+        }
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = decoder.run(device_proxies, tx_event, rx_request, volume, elapsed) {
+            if let Err(e) = decoder.run(device_proxies, rx_request, volume, elapsed) {
                 log::error!("decoder error ({})", e);
             }
         });
-        self.decoder_data = Some(DecoderData {
-            sample_rate,
-            tx_request,
-        });
+        self.tx_request = Some(tx_request);
         self.playback.state = PlaybackState::Playing;
 
         Ok(())
@@ -109,11 +100,10 @@ impl Audio {
 
     pub fn enable_device(&mut self, device_name: &str) -> Result<()> {
         if let Some(device) = self.devices.get_mut(device_name) {
-            device.enable(
-                self.decoder_data
-                    .as_ref()
-                    .map(|d| StreamData::new(d.sample_rate)),
-            )?;
+            match self.playback.state {
+                PlaybackState::Stopped => device.enable(None)?,
+                _ => device.enable(Some(self.tx_event.clone()))?,
+            }
         }
 
         Ok(())
@@ -130,11 +120,10 @@ impl Audio {
             if device.is_enabled() {
                 device.disable();
             } else {
-                device.enable(
-                    self.decoder_data
-                        .as_ref()
-                        .map(|d| StreamData::new(d.sample_rate)),
-                )?;
+                match self.playback.state {
+                    PlaybackState::Stopped => device.enable(None)?,
+                    _ => device.enable(Some(self.tx_event.clone()))?,
+                }
             }
         }
 
@@ -170,7 +159,7 @@ impl Audio {
             device.stop();
         }
         self.playback.state = PlaybackState::Stopped;
-        let _ = self.decoder_data.take();
+        let _ = self.tx_request.take();
 
         Ok(())
     }
@@ -184,7 +173,7 @@ impl Audio {
     }
 
     pub fn seek(&mut self, secs: i64) {
-        if let Some(tx) = self.decoder_data.as_ref().map(|d| &d.tx_request) {
+        if let Some(tx) = &self.tx_request {
             let seek = if secs > 0 {
                 Seek::Forwards(secs.unsigned_abs())
             } else {

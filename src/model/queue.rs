@@ -101,7 +101,7 @@ impl Queue {
     pub fn move_to(&mut self, id: u32) -> Option<Entry> {
         // to prevent repetitions
         if let Some(random) = &mut self.random {
-            random.ids.retain(|random_id| *random_id != id);
+            random.ids.retain(|&random_id| random_id != id);
         };
 
         if let Some(pos) = self.find_by_id(id) {
@@ -135,7 +135,7 @@ impl Queue {
     // some(false) if not, and None if the song wasn't found.
     pub fn remove(&mut self, id: u32) -> Option<bool> {
         if let Some(random) = &mut self.random {
-            random.ids.retain(|random_id| *random_id != id);
+            random.ids.retain(|&random_id| random_id != id);
         }
         if let Some(removed_pos) = self.find_by_id(id) {
             self.list.remove(removed_pos);
