@@ -37,7 +37,7 @@ impl Sample for f64 {}
 
 struct Stream {
     cpal_stream: CpalStream,
-    tx_sample_chunk: cbeam_chan::Sender<Vec<BaseSample>>,
+    tx_sample: cbeam_chan::Sender<BaseSample>,
 }
 
 #[derive(Default)]
@@ -63,7 +63,7 @@ pub struct Device {
 
 // a lightweight struct allowing the decoder to "access" the device
 pub struct ActiveDeviceProxy {
-    pub tx_sample_chunk: cbeam_chan::Sender<Vec<BaseSample>>,
+    pub tx_sample: cbeam_chan::Sender<BaseSample>,
     pub sample_rate: u32,
 }
 
@@ -89,30 +89,21 @@ impl TryFrom<CpalDevice> for Device {
 impl Device {
     fn create_data_callback<T>(
         &self,
-        rx_sample_chunk: cbeam_chan::Receiver<Vec<BaseSample>>,
+        rx_sample: cbeam_chan::Receiver<BaseSample>,
     ) -> Result<impl FnMut(&mut [T], &OutputCallbackInfo) + Send + 'static>
     where
         T: Sample,
     {
-        let mut samples = Vec::new();
         let callback = move |data: &mut [T], _: &OutputCallbackInfo| {
-            let deadline = Instant::now() + Duration::from_millis(UNDERRUN_THRESHOLD);
-            loop {
-                match rx_sample_chunk.recv_deadline(deadline) {
-                    Ok(chunk) => {
-                        samples.extend(chunk.into_iter().map(|s| T::from_sample(s)));
-                        if samples.len() > data.len() {
-                            break;
-                        }
-                    }
-                    Err(_) => {
-                        data.fill(T::EQUILIBRIUM);
-                        return;
-                    }
+            let mut i = 0;
+            while let Ok(s) = rx_sample.try_recv() {
+                data[i] = T::from_sample(s);
+                i += 1;
+                if i >= data.len() {
+                    break;
                 }
             }
-            data.copy_from_slice(&samples[..data.len()]);
-            samples = samples[data.len()..].to_vec();
+            data[i..].fill(T::EQUILIBRIUM);
         };
 
         Ok(callback)
@@ -120,25 +111,27 @@ impl Device {
 
     fn build_cpal_stream(&self, stream_data: StreamData) -> Result<Stream> {
         // let StreamData { sample_rate } = stream_data;
-        let default_config = self.cpal_device.default_output_config()?;
-        let (tx_sample_chunk, rx_sample_chunk) = cbeam_chan::bounded(1);
+        let config = self.cpal_device.default_output_config()?;
+        // buffer up to 1s of audio
+        let (tx_sample, rx_sample) =
+            cbeam_chan::bounded(config.channels() as usize * config.sample_rate().0 as usize);
 
         macro_rules! build_output_stream {
             ($type:ty) => {
                 Ok(Stream {
                     cpal_stream: self.cpal_device.build_output_stream(
-                        &default_config.into(),
-                        self.create_data_callback::<$type>(rx_sample_chunk)?,
+                        &config.into(),
+                        self.create_data_callback::<$type>(rx_sample)?,
                         |e| log::error!("playback error ({})", e),
                         None,
                     )?,
-                    tx_sample_chunk,
+                    tx_sample,
                 })
             };
         }
 
         use SampleFormat::*;
-        match default_config.sample_format() {
+        match config.sample_format() {
             I8 => build_output_stream!(i8),
             I16 => build_output_stream!(i16),
             I32 => build_output_stream!(i32),
@@ -150,13 +143,6 @@ impl Device {
             F32 => build_output_stream!(f32),
             F64 => build_output_stream!(f64),
             x => bail!(format!("unsupported sample format `{:?}`", x)),
-        }
-    }
-
-    pub fn tx_clone(&self) -> Option<cbeam_chan::Sender<Vec<BaseSample>>> {
-        match &self.state {
-            DeviceState::Active(stream) => Some(stream.tx_sample_chunk.clone()),
-            _ => None,
         }
     }
 
@@ -216,7 +202,7 @@ impl ActiveDeviceProxy {
     pub fn try_new(device: &Device) -> Option<Self> {
         match &device.state {
             DeviceState::Active(stream) => Some(Self {
-                tx_sample_chunk: stream.tx_sample_chunk.clone(),
+                tx_sample: stream.tx_sample.clone(),
                 sample_rate: device.config.sample_rate().0,
             }),
             _ => None,

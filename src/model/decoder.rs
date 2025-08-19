@@ -96,9 +96,9 @@ impl Decoder {
         volume: Arc<RwLock<Volume>>,
         elapsed: Arc<RwLock<u64>>,
     ) -> Result<()> {
-        let send = |proxies: &[ActiveDeviceProxy],
-                    resamplers: &mut [Option<Resampler<BaseSample>>],
-                    decoded: AudioBufferRef|
+        let send_decoded_packet = |proxies: &[ActiveDeviceProxy],
+                                   resamplers: &mut [Option<Resampler<BaseSample>>],
+                                   decoded: AudioBufferRef|
          -> bool {
             if decoded.frames() == 0 {
                 return true;
@@ -109,24 +109,23 @@ impl Decoder {
             let duration = decoded.capacity() as u64;
             let mut buf = SampleBuffer::new(duration, spec);
             buf.copy_interleaved_ref(decoded.clone());
-            let unchanged_samples = buf.samples().to_vec();
+            let unchanged_samples = buf.samples();
 
             for (proxy, resampler) in proxies.iter().zip(resamplers.iter_mut()) {
                 let samples = match resampler {
                     Some(resampler) => match resampler.resample(&decoded) {
-                        Some(samples) => samples,
+                        Some(resampled_samples) => resampled_samples,
                         None => return true,
                     },
-                    None => unchanged_samples.clone(),
+                    None => unchanged_samples,
                 };
-                let to_send: Vec<_> = samples
-                    .into_iter()
-                    .map(|s| (s * mult).clamp(BASE_SAMPLE_MIN, BASE_SAMPLE_MAX))
-                    .collect();
-                let avg = to_send.iter().fold(0.0, |acc, x| acc + x.abs()) / (to_send.len() as f64);
-                eprintln!("{}", avg);
-                if proxy.tx_sample_chunk.send(to_send).is_err() {
-                    return false;
+                for s in samples
+                    .iter()
+                    .map(|s| (*s * mult).clamp(BASE_SAMPLE_MIN, BASE_SAMPLE_MAX))
+                {
+                    if proxy.tx_sample.send(s).is_err() {
+                        return false;
+                    }
                 }
             }
 
@@ -181,7 +180,7 @@ impl Decoder {
                                 }
                                 first_packet = false;
                             }
-                            if !send(&proxies, &mut resamplers, decoded) {
+                            if !send_decoded_packet(&proxies, &mut resamplers, decoded) {
                                 return Ok(());
                             }
                             if let Some(time_base) = time_base {
@@ -228,8 +227,8 @@ mod decoder_utils {
 
     // non-linear volume slider
     // source: https://www.dr-lex.be/info-stuff/volumecontrols.html
-    pub fn volume_to_mult(v: Volume) -> f64 {
+    pub fn volume_to_mult(v: Volume) -> BaseSample {
         let v: u8 = v.into();
-        (0.07 * (v as f64)).exp() / 1000.0
+        (0.07 * (v as BaseSample)).exp() / 1000.0
     }
 }
