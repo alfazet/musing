@@ -18,10 +18,13 @@ use tokio::{
     task::{self, JoinHandle},
 };
 
-use crate::model::{
-    decoder::{Decoder, DecoderRequest, Seek, Volume},
-    device::{ActiveDeviceProxy, BaseSample, Device},
-    song::{Song, SongEvent},
+use crate::{
+    constants,
+    model::{
+        decoder::{Decoder, DecoderRequest, Seek, Volume},
+        device::{BaseSample, Device, DeviceProxy},
+        song::{Song, SongEvent},
+    },
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -56,11 +59,14 @@ impl Audio {
         }
     }
 
-    pub fn with_default(mut self, default_device_name: &str) -> Result<Self> {
-        self.add_device(default_device_name)?;
-        self.enable_device(default_device_name)?;
+    pub fn with_default(mut self, default_devices_names: &[String]) -> Self {
+        for name in default_devices_names.iter() {
+            if let Err(e) = self.add_device(name).and_then(|_| self.enable_device(name)) {
+                log::error!("could not add device {} ({})", name, e);
+            }
+        }
 
-        Ok(self)
+        self
     }
 
     pub fn play(&mut self, mut decoder: Decoder) -> Result<()> {
@@ -74,10 +80,13 @@ impl Audio {
         let device_proxies: Vec<_> = self
             .devices
             .values()
-            .filter_map(ActiveDeviceProxy::try_new)
+            .filter_map(DeviceProxy::try_new)
             .collect();
         if device_proxies.is_empty() {
             bail!("playback error (all audio devices are disabled)");
+        }
+        if let Some(tx_request) = &self.tx_request {
+            tx_request.send(DecoderRequest::Stop);
         }
         tokio::task::spawn_blocking(move || {
             if let Err(e) = decoder.run(device_proxies, rx_request, volume, elapsed) {
@@ -98,36 +107,39 @@ impl Audio {
         Ok(())
     }
 
+    pub fn disable_device(&mut self, device_name: String) -> Result<()> {
+        let res = self
+            .devices
+            .get_mut(&device_name)
+            .ok_or(anyhow!(format!("device {} not found", &device_name)))
+            .map(|d| d.disable());
+        if res.is_ok()
+            && let Some(tx_request) = &self.tx_request
+        {
+            let _ = tx_request.send(DecoderRequest::Disable(device_name));
+        }
+
+        res
+    }
+
     pub fn enable_device(&mut self, device_name: &str) -> Result<()> {
-        if let Some(device) = self.devices.get_mut(device_name) {
-            match self.playback.state {
-                PlaybackState::Stopped => device.enable(None)?,
-                _ => device.enable(Some(self.tx_event.clone()))?,
-            }
-        }
+        match self.devices.get_mut(device_name) {
+            Some(device) => match self.playback.state {
+                PlaybackState::Stopped => device.enable(None),
+                _ => {
+                    let res = device.enable(Some(self.tx_event.clone()));
+                    if res.is_ok()
+                        && let Some(tx_request) = &self.tx_request
+                    {
+                        let proxy = DeviceProxy::try_new(&device).unwrap();
+                        let _ = tx_request.send(DecoderRequest::Enable(proxy));
+                    }
 
-        Ok(())
-    }
-
-    pub fn disable_device(&mut self, device_name: &str) {
-        if let Some(device) = self.devices.get_mut(device_name) {
-            device.disable();
-        }
-    }
-
-    pub fn toggle_device(&mut self, device_name: &str) -> Result<()> {
-        if let Some(device) = self.devices.get_mut(device_name) {
-            if device.is_enabled() {
-                device.disable();
-            } else {
-                match self.playback.state {
-                    PlaybackState::Stopped => device.enable(None)?,
-                    _ => device.enable(Some(self.tx_event.clone()))?,
+                    res
                 }
-            }
+            },
+            None => bail!(format!("device {} not found", device_name)),
         }
-
-        Ok(())
     }
 
     pub fn pause(&mut self) -> Result<()> {
@@ -159,6 +171,9 @@ impl Audio {
             device.stop();
         }
         self.playback.state = PlaybackState::Stopped;
+        if let Some(tx_request) = &self.tx_request {
+            tx_request.send(DecoderRequest::Stop);
+        }
         let _ = self.tx_request.take();
 
         Ok(())
@@ -233,7 +248,7 @@ mod audio_utils {
                 );
                 for name in host
                     .output_devices()?
-                    .map(|d| d.name().unwrap_or("[unnamed]".into()))
+                    .map(|d| d.name().unwrap_or(constants::UNKNOWN_DEVICE.into()))
                 {
                     err_msg += &name;
                     err_msg.push(',');

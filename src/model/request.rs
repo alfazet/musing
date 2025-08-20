@@ -29,6 +29,13 @@ pub enum DbRequestKind {
     Update,
 }
 
+pub struct DisableArgs(pub String);
+pub struct EnableArgs(pub String);
+pub enum DeviceRequestKind {
+    Disable(DisableArgs),
+    Enable(EnableArgs),
+}
+
 pub struct SeekArgs(pub i64); // in seconds
 pub struct VolumeArgs(pub VolumeRequest);
 pub enum PlaybackRequestKind {
@@ -62,6 +69,7 @@ pub enum StatusRequestKind {
 
 pub enum RequestKind {
     Db(DbRequestKind),
+    Device(DeviceRequestKind),
     Playback(PlaybackRequestKind),
     Queue(QueueRequestKind),
     Status(StatusRequestKind),
@@ -142,6 +150,30 @@ impl TryFrom<&[String]> for UniqueArgs {
             )?;
 
         Ok(Self(tag, group_by, filter_expr))
+    }
+}
+
+impl TryFrom<&[String]> for DisableArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &[String]) -> Result<Self> {
+        if args.is_empty() {
+            bail!("invalid arguments to `disable`");
+        }
+
+        Ok(Self(args[0].clone()))
+    }
+}
+
+impl TryFrom<&[String]> for EnableArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &[String]) -> Result<Self> {
+        if args.is_empty() {
+            bail!("invalid arguments to `enable`");
+        }
+
+        Ok(Self(args[0].clone()))
     }
 }
 
@@ -236,6 +268,7 @@ impl TryFrom<&str> for RequestKind {
 
     fn try_from(s: &str) -> Result<Self> {
         use DbRequestKind as Db;
+        use DeviceRequestKind as Device;
         use PlaybackRequestKind as Playback;
         use QueueRequestKind as Queue;
         use StatusRequestKind as Status;
@@ -249,6 +282,9 @@ impl TryFrom<&str> for RequestKind {
                 "unique" => RequestKind::Db(Db::Unique(tokens[1..].try_into()?)),
                 "update" => RequestKind::Db(Db::Update),
 
+                "disable" => RequestKind::Device(Device::Disable(tokens[1..].try_into()?)),
+                "enable" => RequestKind::Device(Device::Enable(tokens[1..].try_into()?)),
+                // TODO: devices (gets all available devices)
                 "pause" => RequestKind::Playback(Playback::Pause),
                 "resume" => RequestKind::Playback(Playback::Resume),
                 "seek" => RequestKind::Playback(Playback::Seek(tokens[1..].try_into()?)),

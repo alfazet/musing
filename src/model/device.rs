@@ -18,7 +18,7 @@ use tokio::{
     task::{self, JoinHandle},
 };
 
-use crate::model::song::SongEvent;
+use crate::{constants, model::song::SongEvent};
 
 pub type BaseSample = f64;
 trait Sample: FromSample<BaseSample> + SizedSample + Send + 'static {}
@@ -53,10 +53,11 @@ pub struct Device {
     state: DeviceState,
 }
 
-// a lightweight struct allowing the decoder to "access" the device
-pub struct ActiveDeviceProxy {
-    pub tx_sample: cbeam_chan::Sender<BaseSample>,
+// a lightweight struct allowing the decoder to access the device
+pub struct DeviceProxy {
+    pub name: String,
     pub sample_rate: u32,
+    pub tx_sample: cbeam_chan::Sender<BaseSample>,
 }
 
 impl TryFrom<CpalDevice> for Device {
@@ -81,7 +82,7 @@ impl Device {
     where
         T: Sample,
     {
-        let callback = move |data: &mut [T], _: &OutputCallbackInfo| {
+        let callback = move |data: &mut [T], x: &OutputCallbackInfo| {
             let mut i = 0;
             while let Ok(s) = rx_sample.try_recv() {
                 // NAN == the end of this song
@@ -144,6 +145,11 @@ impl Device {
         !matches!(self.state, DeviceState::Disabled)
     }
 
+    pub fn disable(&mut self) {
+        // this drops the stream (and stops it)
+        self.state = DeviceState::Disabled;
+    }
+
     pub fn enable(
         &mut self,
         tx_event: Option<tokio_chan::UnboundedSender<SongEvent>>,
@@ -156,11 +162,6 @@ impl Device {
         }
 
         Ok(())
-    }
-
-    pub fn disable(&mut self) {
-        // this drops the stream (and stops it)
-        self.state = DeviceState::Disabled;
     }
 
     pub fn play(&mut self, tx_event: tokio_chan::UnboundedSender<SongEvent>) -> Result<()> {
@@ -194,12 +195,16 @@ impl Device {
     }
 }
 
-impl ActiveDeviceProxy {
+impl DeviceProxy {
     pub fn try_new(device: &Device) -> Option<Self> {
         match &device.state {
             DeviceState::Active(stream) => Some(Self {
-                tx_sample: stream.tx_sample.clone(),
+                name: device
+                    .cpal_device
+                    .name()
+                    .unwrap_or(constants::UNKNOWN_DEVICE.into()),
                 sample_rate: device.config.sample_rate().0,
+                tx_sample: stream.tx_sample.clone(),
             }),
             _ => None,
         }

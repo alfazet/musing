@@ -38,9 +38,11 @@ impl ClientHandler {
         tx_request: tokio_chan::UnboundedSender<Request>,
         mut rx_shutdown: broadcast::Receiver<()>,
     ) -> Result<()> {
-        self.stream
-            .write_all(format!("musing v{}\n", env!("CARGO_PKG_VERSION")).as_bytes())
-            .await?;
+        let banner = format!("musing v{}\n", env!("CARGO_PKG_VERSION"));
+        let bytes = banner.as_bytes();
+        self.stream.write_u32(bytes.len() as u32).await?;
+        self.stream.write_all(bytes).await?;
+
         loop {
             // read the length (4 bytes, big endian)
             let res = tokio::select! {
@@ -63,6 +65,8 @@ impl ClientHandler {
                 break;
             }
             let s = String::from_utf8(buf)?;
+
+            // respond
             let response = match RequestKind::try_from(s.as_str()) {
                 Ok(kind) => {
                     let (tx_response, rx_response) = oneshot::channel();
@@ -71,7 +75,9 @@ impl ClientHandler {
                 }
                 Err(e) => Response::new_err(e.to_string()).into_json_string()?,
             };
-            self.stream.write_all(response.as_bytes()).await?;
+            let bytes = response.as_bytes();
+            self.stream.write_u32(bytes.len() as u32).await?;
+            self.stream.write_all(bytes).await?;
         }
 
         Ok(())

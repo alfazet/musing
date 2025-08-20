@@ -46,7 +46,7 @@ impl Player {
     fn play(&mut self, db_id: u32) -> Result<()> {
         self.queue.add_current_to_history();
         let song = self.song_by_db_id(db_id)?;
-        let decoder = Decoder::try_new(song, false)?;
+        let decoder = Decoder::try_new(song, true)?;
         self.audio.play(decoder)?;
 
         Ok(())
@@ -94,6 +94,21 @@ impl Player {
         });
 
         rx.await.unwrap()
+    }
+
+    fn device_request(&mut self, req: request::DeviceRequestKind) -> Response {
+        use request::{DeviceRequestKind, DisableArgs, EnableArgs};
+
+        match req {
+            DeviceRequestKind::Disable(args) => {
+                let DisableArgs(device) = args;
+                self.audio.disable_device(device).into()
+            }
+            DeviceRequestKind::Enable(args) => {
+                let EnableArgs(device) = args;
+                self.audio.enable_device(&device).into()
+            }
+        }
     }
 
     fn playback_request(&mut self, req: request::PlaybackRequestKind) -> Response {
@@ -225,6 +240,7 @@ impl Player {
     async fn handle_request(&mut self, req: RequestKind) -> Response {
         match req {
             RequestKind::Db(req) => self.db_request(req).await,
+            RequestKind::Device(req) => self.device_request(req),
             RequestKind::Playback(req) => self.playback_request(req),
             RequestKind::Queue(req) => self.queue_request(req),
             RequestKind::Status(req) => self.status_request(req),
@@ -278,13 +294,13 @@ pub async fn run(
     rx_request: tokio_chan::UnboundedReceiver<Request>,
 ) -> Result<()> {
     let PlayerConfig {
-        default_device,
+        default_devices,
         music_dir,
         allowed_exts,
     } = config;
 
     let (tx_event, rx_event) = tokio_chan::unbounded_channel();
-    let audio = Audio::new(tx_event).with_default(default_device.as_str())?;
+    let audio = Audio::new(tx_event).with_default(&default_devices);
     // creating the db is blocking and parallelizable,
     // so we delegate it to rayon's thread pool
     let database = {
