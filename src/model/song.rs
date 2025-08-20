@@ -54,6 +54,12 @@ impl Metadata {
     pub fn get(&self, tag: &TagKey) -> Option<&str> {
         self.data.get(tag).map(|s| s.as_str())
     }
+
+    pub fn merge(self, other: Metadata) -> Self {
+        Self {
+            data: self.data.into_iter().chain(other.data).collect(),
+        }
+    }
 }
 
 impl TryFrom<&Path> for Song {
@@ -61,19 +67,20 @@ impl TryFrom<&Path> for Song {
 
     fn try_from(path: &Path) -> Result<Self> {
         let mut probe_res = song_utils::get_probe_result(path, false)?;
-        let metadata = probe_res
+        let metadata_probe = probe_res
             .metadata
             .get()
-            .map(|mut metadata| {
-                metadata
-                    .skip_to_latest()
-                    .map(Metadata::from)
-                    .unwrap_or_default()
-            })
+            .map(|m| m.current().map(Metadata::from).unwrap_or_default())
+            .unwrap_or_default();
+        let metadata_container = probe_res
+            .format
+            .metadata()
+            .current()
+            .map(Metadata::from)
             .unwrap_or_default();
         let song = Self {
             path: path.to_path_buf(),
-            metadata,
+            metadata: metadata_probe.merge(metadata_container),
         };
 
         Ok(song)
