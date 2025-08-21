@@ -14,6 +14,12 @@ impl From<(u32, u32)> for Entry {
     }
 }
 
+#[derive(Debug)]
+pub enum QueueMode {
+    Sequential,
+    Random,
+}
+
 struct Random {
     rng: SmallRng,
     ids: Vec<u32>,
@@ -76,7 +82,7 @@ impl Queue {
         match &mut self.random {
             Some(random) => {
                 // move to the next random position or None if none are left
-                self.pos = random.ids.pop().and_then(|id| self.find_by_id(id))
+                self.pos = random.ids.pop().and_then(|id| self.find_by_id(id));
             }
             None => match &mut self.pos {
                 Some(pos) if *pos < self.list.len() - 1 => *pos += 1,
@@ -165,26 +171,32 @@ impl Queue {
         self.next_id = 0;
     }
 
-    // TODO: make an enum with modes (normal, random, consume)
-    pub fn toggle_random(&mut self) {
-        if self.random.is_none() {
-            let not_played_ids: Vec<_> = self
-                .list
-                .clone()
-                .into_iter()
-                .filter(|entry| {
-                    !self.history.contains(&entry.queue_id)
-                        && self
-                            .current()
-                            .map(|cur_entry| entry.queue_id != cur_entry.queue_id)
-                            .unwrap_or(true)
-                })
-                .map(|entry| entry.queue_id)
-                .collect();
-            self.random = Some(Random::new(not_played_ids));
-        } else {
-            let _ = self.random.take();
+    pub fn change_mode(&mut self, mode: QueueMode) {
+        match mode {
+            QueueMode::Sequential => self.start_sequential(),
+            QueueMode::Random => self.start_random(),
         }
+    }
+
+    pub fn start_sequential(&mut self) {
+        let _ = self.random.take();
+    }
+
+    pub fn start_random(&mut self) {
+        let not_played_ids: Vec<_> = self
+            .list
+            .clone()
+            .into_iter()
+            .filter(|entry| {
+                !self.history.contains(&entry.queue_id)
+                    && self
+                        .current()
+                        .map(|cur_entry| entry.queue_id != cur_entry.queue_id)
+                        .unwrap_or(true)
+            })
+            .map(|entry| entry.queue_id)
+            .collect();
+        self.random = Some(Random::new(not_played_ids));
     }
 }
 

@@ -54,20 +54,24 @@ pub struct Audio {
 
 impl Audio {
     pub fn new(tx_event: tokio_chan::UnboundedSender<SongEvent>) -> Self {
-        let devices = audio_utils::output_devices()
-            .into_iter()
-            .filter_map(|d| {
-                let name = d.name().unwrap_or(constants::UNKNOWN_DEVICE.into());
-                match Device::try_from(d) {
-                    Ok(device) => Some((name, device)),
-                    Err(_) => None,
-                }
-            })
-            .collect();
+        // for some reason iterating over devices *sometimes* causes audio to break in the entire OS
+        // so for the time being simultaneous output to many devices is disabled
+        // this seems to be a problem with CPAL
+        //
+        // let devices = audio_utils::output_devices()
+        //     .into_iter()
+        //     .filter_map(|d| {
+        //         let name = d.name().unwrap_or(constants::UNKNOWN_DEVICE.into());
+        //         match Device::try_from(d) {
+        //             Ok(device) => Some((name, device)),
+        //             Err(_) => None,
+        //         }
+        //     })
+        //     .collect();
 
         Self {
             playback: Playback::default(),
-            devices,
+            devices: HashMap::new(),
             tx_request: None,
             tx_event,
         }
@@ -107,19 +111,31 @@ impl Audio {
         self.devices.get(device_name)
     }
 
-    pub fn with_default(mut self, default_devices_names: &[String]) -> Self {
-        for name in default_devices_names.iter() {
-            match self.devices.get(name) {
+    // use either the system's default audio output device or the provided one
+    pub fn with_default(mut self, default_device_name: Option<&String>) -> Result<Self> {
+        if let Some(name) = default_device_name {
+            let device = audio_utils::device_by_name(name)?;
+            self.add_device(device, name)?;
+            self.enable_device(name)?;
+        } else {
+            match audio_utils::default_output_device() {
                 Some(device) => {
-                    if let Err(e) = self.enable_device(name) {
-                        log::error!("could not enable device `{}` ({})", name, e);
-                    }
+                    let name = device.name().unwrap_or(constants::UNKNOWN_DEVICE.into());
+                    self.add_device(device, &name)?;
+                    self.enable_device(&name)?;
                 }
-                None => log::error!("device `{}` not found", name),
+                None => bail!("no audio output devices found"),
             }
         }
 
-        self
+        Ok(self)
+    }
+
+    fn add_device(&mut self, cpal_device: CpalDevice, name: &str) -> Result<()> {
+        let device = Device::try_from(cpal_device)?;
+        self.devices.insert(name.into(), device);
+
+        Ok(())
     }
 
     pub fn disable_device(&mut self, device_name: String) -> Result<()> {
@@ -271,10 +287,39 @@ impl Audio {
 mod audio_utils {
     use super::*;
 
+    pub fn default_output_device() -> Option<CpalDevice> {
+        let host = cpal::default_host();
+        host.default_output_device()
+    }
+
     pub fn output_devices() -> Vec<CpalDevice> {
         let host = cpal::default_host();
         host.output_devices()
             .map(|devices| devices.collect::<Vec<_>>())
             .unwrap_or_default()
+    }
+
+    pub fn device_by_name(device_name: &str) -> Result<CpalDevice> {
+        let host = cpal::default_host();
+        match host
+            .output_devices()?
+            .find(|x| x.name().map(|s| s == device_name).unwrap_or(false))
+        {
+            Some(device) => Ok(device),
+            None => {
+                let mut err_msg = format!(
+                    "audio device `{}` unavailable, available devices: ",
+                    device_name
+                );
+                for name in host
+                    .output_devices()?
+                    .map(|d| d.name().unwrap_or(constants::UNKNOWN_DEVICE.into()))
+                {
+                    err_msg += &name;
+                    err_msg.push(',');
+                }
+                bail!(err_msg)
+            }
+        }
     }
 }

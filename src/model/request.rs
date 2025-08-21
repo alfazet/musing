@@ -6,8 +6,8 @@ use tokio::sync::{
 
 use crate::{
     model::{
-        comparator::Comparator, decoder::Volume, filter::FilterExpr, response::Response,
-        tag_key::TagKey,
+        comparator::Comparator, decoder::Volume, filter::FilterExpr, queue::QueueMode,
+        response::Response, tag_key::TagKey,
     },
     parsers::request,
 };
@@ -50,11 +50,13 @@ pub enum PlaybackRequestKind {
 }
 
 pub struct AddArgs(pub Vec<u32>, pub Option<usize>); // db ids
+pub struct ModeArgs(pub QueueMode);
 pub struct PlayArgs(pub u32); // queue id
 pub struct RemoveArgs(pub Vec<u32>); // queue ids
 pub enum QueueRequestKind {
     Add(AddArgs),
     Clear,
+    Mode(ModeArgs),
     Next,
     Play(PlayArgs),
     Previous,
@@ -235,6 +237,23 @@ impl TryFrom<&[String]> for AddArgs {
     }
 }
 
+impl TryFrom<&[String]> for ModeArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &[String]) -> Result<Self> {
+        if args.is_empty() {
+            bail!("invalid arguments to `mode`");
+        }
+        let mode = match args[0].as_str() {
+            "sequential" => QueueMode::Sequential,
+            "random" => QueueMode::Random,
+            _ => bail!("valid modes: `sequential`, `random`"),
+        };
+
+        Ok(Self(mode))
+    }
+}
+
 impl TryFrom<&[String]> for PlayArgs {
     type Error = anyhow::Error;
 
@@ -297,6 +316,7 @@ impl TryFrom<&str> for RequestKind {
 
                 "add" => RequestKind::Queue(Queue::Add(tokens[1..].try_into()?)),
                 "clear" => RequestKind::Queue(Queue::Clear),
+                "mode" => RequestKind::Queue(Queue::Mode(tokens[1..].try_into()?)),
                 "next" => RequestKind::Queue(Queue::Next),
                 "play" => RequestKind::Queue(Queue::Play(tokens[1..].try_into()?)),
                 "previous" => RequestKind::Queue(Queue::Previous),

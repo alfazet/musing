@@ -21,21 +21,14 @@ where
 {
     fn resample_inner(&mut self) -> &[T] {
         {
-            let mut input: arrayvec::ArrayVec<&[BaseSample], 32> = Default::default();
-
+            let mut in_channels = Vec::with_capacity(self.input.len());
             for channel in self.input.iter() {
-                input.push(&channel[..self.duration]);
+                in_channels.push(&channel[..self.duration]);
             }
-
-            RubatoResampler::process_into_buffer(
-                &mut self.resampler,
-                &input,
-                &mut self.output,
-                None,
-            )
-            .unwrap();
+            let _ = self
+                .resampler
+                .process_into_buffer(&in_channels, &mut self.output, None);
         }
-
         for channel in self.input.iter_mut() {
             channel.drain(0..self.duration);
         }
@@ -43,8 +36,8 @@ where
         self.interleaved
             .resize(num_channels * self.output[0].len(), T::MID);
         for (i, frame) in self.interleaved.chunks_exact_mut(num_channels).enumerate() {
-            for (ch, s) in frame.iter_mut().enumerate() {
-                *s = self.output[ch][i].into_sample();
+            for (chan, s) in frame.iter_mut().enumerate() {
+                *s = self.output[chan][i].into_sample();
             }
         }
 
@@ -56,18 +49,13 @@ impl<T> Resampler<T>
 where
     T: Sample + FromSample<BaseSample> + IntoSample<BaseSample>,
 {
-    pub fn new(spec: SignalSpec, to_sample_rate: u32, duration: u64) -> Self {
+    pub fn new(spec: SignalSpec, out_rate: u32, duration: u64) -> Self {
         let duration = duration as usize;
         let n_channels = spec.channels.count();
-        let resampler = FftFixedIn::<BaseSample>::new(
-            spec.rate as usize,
-            to_sample_rate as usize,
-            duration,
-            2,
-            n_channels,
-        )
-        .unwrap();
-        let output = RubatoResampler::output_buffer_allocate(&resampler);
+        let (in_rate, out_rate) = (spec.rate as usize, out_rate as usize);
+        let resampler =
+            FftFixedIn::<BaseSample>::new(in_rate, out_rate, duration, 2, n_channels).unwrap();
+        let output = FftFixedIn::output_buffer_allocate(&resampler);
         let input = vec![Vec::with_capacity(duration); n_channels];
         let interleaved = Vec::new();
 

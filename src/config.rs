@@ -11,9 +11,9 @@ pub struct CliOptions {
     #[arg(short = 'p', long = "port")]
     pub port: Option<u16>,
 
-    /// Names of the default audio devices to use (space-separated).
-    #[arg(short = 'd', long = "devices", num_args = 1..)]
-    pub default_devices: Option<Vec<String>>,
+    /// Audio device to use as the output.
+    #[arg(short = 'd', long = "device")]
+    pub audio_device: Option<String>,
 
     /// Path to the directory containing the music files.
     #[arg(short = 'm', long = "music")]
@@ -39,7 +39,7 @@ pub struct ServerConfig {
 
 #[derive(Debug)]
 pub struct PlayerConfig {
-    pub default_devices: Vec<String>,
+    pub audio_device: Option<String>,
     pub music_dir: PathBuf,
     pub allowed_exts: Vec<String>,
 }
@@ -63,10 +63,7 @@ impl ServerConfig {}
 impl Default for PlayerConfig {
     fn default() -> Self {
         Self {
-            default_devices: constants::DEFAULT_DEVICES
-                .into_iter()
-                .map(|s| s.to_string())
-                .collect(),
+            audio_device: None,
             music_dir: constants::DEFAULT_MUSIC_DIR.into(),
             allowed_exts: constants::DEFAULT_ALLOWED_EXTS
                 .into_iter()
@@ -98,9 +95,7 @@ impl Config {
             ..self.server_config
         };
         let player_config = PlayerConfig {
-            default_devices: cli_opts
-                .default_devices
-                .unwrap_or(self.player_config.default_devices),
+            audio_device: cli_opts.audio_device,
             music_dir: cli_opts.music_dir.unwrap_or(self.player_config.music_dir),
             ..self.player_config
         };

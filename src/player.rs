@@ -145,7 +145,7 @@ impl Player {
     }
 
     fn queue_request(&mut self, req: request::QueueRequestKind) -> Response {
-        use request::{AddArgs, PlayArgs, QueueRequestKind, RemoveArgs};
+        use request::{AddArgs, ModeArgs, PlayArgs, QueueRequestKind, RemoveArgs};
 
         match req {
             QueueRequestKind::Add(args) => {
@@ -165,6 +165,12 @@ impl Player {
             QueueRequestKind::Clear => {
                 self.queue.clear();
                 self.audio.stop().into()
+            }
+            QueueRequestKind::Mode(args) => {
+                let ModeArgs(mode) = args;
+                self.queue.change_mode(mode);
+
+                Response::new_ok()
             }
             QueueRequestKind::Next => {
                 self.move_next_until_playable();
@@ -299,13 +305,13 @@ pub async fn run(
     rx_request: tokio_chan::UnboundedReceiver<Request>,
 ) -> Result<()> {
     let PlayerConfig {
-        default_devices,
+        audio_device,
         music_dir,
         allowed_exts,
     } = config;
 
     let (tx_event, rx_event) = tokio_chan::unbounded_channel();
-    let audio = Audio::new(tx_event).with_default(&default_devices);
+    let audio = Audio::new(tx_event).with_default(audio_device.as_ref())?;
     // creating the db is blocking and parallelizable,
     // so we delegate it to rayon's thread pool
     let database = {
