@@ -23,7 +23,7 @@ use tokio::{
 use crate::model::{
     device::{BaseSample, DeviceProxy},
     resampler::Resampler,
-    song::{Song, SongEvent},
+    song::{Song, SongEvent, SongProxy},
 };
 
 const BASE_SAMPLE_MIN: BaseSample = -1.0;
@@ -68,31 +68,40 @@ pub enum DecoderRequest {
 pub struct Decoder {
     demuxer: Box<dyn FormatReader>,
     decoder: Box<dyn SymphoniaDecoder>,
+    device_proxies: Vec<(DeviceProxy, Option<Resampler<BaseSample>>)>,
     track_id: u32,
+    local_elapsed: u64,
 }
 
 impl Decoder {
-    pub fn try_new(song: &Song, gapless: bool) -> Result<Self> {
-        let demuxer = song.demuxer(gapless)?;
+    pub fn try_new(
+        song_proxy: SongProxy,
+        device_proxies: Vec<DeviceProxy>,
+        gapless: bool,
+    ) -> Result<Self> {
+        let demuxer = song_proxy.demuxer(gapless)?;
         let track = demuxer.default_track().ok_or(anyhow!(
             "no audio track found in `{}`",
-            &song.path.to_string_lossy()
+            song_proxy.path.to_string_lossy()
         ))?;
         let track_id = track.id;
         let decoder_opts: SymphoniaDecoderOptions = Default::default();
         let decoder = symphonia::default::get_codecs().make(&track.codec_params, &decoder_opts)?;
+        let device_proxies = device_proxies.into_iter().map(|d| (d, None)).collect();
 
         Ok(Self {
             demuxer,
             decoder,
+            device_proxies,
             track_id,
+            local_elapsed: 0,
         })
     }
 
-    fn seek(&mut self, seek: Seek, prev_elapsed: &mut u64) {
+    fn seek(&mut self, seek: Seek) {
         let target_elapsed = match seek {
-            Seek::Forwards(secs) => prev_elapsed.saturating_add(secs),
-            Seek::Backwards(secs) => prev_elapsed.saturating_sub(secs),
+            Seek::Forwards(secs) => self.local_elapsed.saturating_add(secs),
+            Seek::Backwards(secs) => self.local_elapsed.saturating_sub(secs),
         };
         let target_time = Time {
             seconds: target_elapsed,
@@ -106,29 +115,53 @@ impl Decoder {
         self.decoder.reset();
     }
 
+    fn stop(&self) {
+        for proxy in self.device_proxies.iter() {
+            let _ = proxy.0.tx_sample.send(BaseSample::NAN);
+        }
+    }
+
+    // true -> stop the decoder
+    fn handle_request(&mut self, req: DecoderRequest) -> bool {
+        match req {
+            DecoderRequest::Disable(device_name) => {
+                self.device_proxies.retain(|p| p.0.name != device_name)
+            }
+            DecoderRequest::Enable(proxy) => {
+                self.device_proxies.push((proxy, None));
+            }
+            DecoderRequest::Seek(seek) => self.seek(seek),
+            DecoderRequest::Stop => {
+                self.stop();
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub fn run(
         &mut self,
-        mut proxies: Vec<DeviceProxy>,
         rx_request: cbeam_chan::Receiver<DecoderRequest>,
         volume: Arc<RwLock<Volume>>,
         elapsed: Arc<RwLock<u64>>,
     ) -> Result<()> {
-        let send_decoded_packet = |proxies: &[DeviceProxy],
-                                   resamplers: &mut [Option<Resampler<BaseSample>>],
-                                   decoded: AudioBufferRef| {
+        fn send_decoded_packet(
+            proxies: &mut [(DeviceProxy, Option<Resampler<BaseSample>>)],
+            decoded: AudioBufferRef,
+            volume: Volume,
+        ) {
             if decoded.frames() == 0 {
                 return;
             }
-            let v = { *volume.read().unwrap() };
-            let mult = decoder_utils::volume_to_mult(v);
+            let mult = decoder_utils::volume_to_mult(volume);
             let spec = *decoded.spec();
             let duration = decoded.capacity() as u64;
             let mut buf = SampleBuffer::new(duration, spec);
             buf.copy_interleaved_ref(decoded.clone());
             let unchanged_samples = buf.samples();
 
-            let mut at_least_one = false;
-            for (proxy, resampler) in proxies.iter().zip(resamplers.iter_mut()) {
+            for (proxy, resampler) in proxies.iter_mut() {
                 let samples = match resampler {
                     Some(resampler) => match resampler.resample(&decoded) {
                         Some(resampled_samples) => resampled_samples,
@@ -143,48 +176,32 @@ impl Decoder {
                     let _ = proxy.tx_sample.send(s);
                 }
             }
-        };
+        }
 
-        let stop_decoding = |proxies: &[DeviceProxy], elapsed: &Arc<RwLock<u64>>| {
-            for proxy in proxies.iter() {
-                let _ = proxy.tx_sample.send(BaseSample::NAN);
-            }
-            *elapsed.write().unwrap() = 0;
-        };
-
+        self.local_elapsed = 0;
         let time_base = self.decoder.codec_params().time_base;
-        let mut prev_elapsed: u64 = 0;
-        let mut first_packet = true;
         let mut resamplers: Vec<Option<Resampler<BaseSample>>> = Vec::new();
         loop {
             // don't proceed if there are no devices to receive the samples
-            while proxies.is_empty() {
+            while self.device_proxies.is_empty() {
                 match rx_request.recv() {
-                    Ok(request) => match request {
-                        DecoderRequest::Enable(proxy) => proxies.push(proxy),
-                        DecoderRequest::Seek(seek) => self.seek(seek, &mut prev_elapsed),
-                        DecoderRequest::Stop => {
-                            stop_decoding(&proxies, &elapsed);
+                    Ok(request) => {
+                        if self.handle_request(request) {
+                            *elapsed.write().unwrap() = 0;
                             break;
                         }
-                        _ => (),
-                    },
+                    }
                     // the player went out of scope (due to an error or a Ctrl+C)
                     Err(_) => return Ok(()),
                 }
             }
             match rx_request.try_recv() {
-                Ok(request) => match request {
-                    DecoderRequest::Disable(device_name) => {
-                        proxies.retain(|p| p.name != device_name)
-                    }
-                    DecoderRequest::Enable(proxy) => proxies.push(proxy),
-                    DecoderRequest::Seek(seek) => self.seek(seek, &mut prev_elapsed),
-                    DecoderRequest::Stop => {
-                        stop_decoding(&proxies, &elapsed);
+                Ok(request) => {
+                    if self.handle_request(request) {
+                        *elapsed.write().unwrap() = 0;
                         break;
                     }
-                },
+                }
                 // the player went out of scope (due to an error or a Ctrl+C)
                 Err(TryRecvError::Disconnected) => return Ok(()),
                 _ => (),
@@ -193,28 +210,22 @@ impl Decoder {
                 Ok(packet) if packet.track_id() == self.track_id => {
                     match self.decoder.decode(&packet) {
                         Ok(decoded) => {
-                            if first_packet {
-                                let spec = *decoded.spec();
-                                let duration = decoded.capacity() as u64;
-                                for proxy in proxies.iter() {
-                                    if proxy.sample_rate != spec.rate {
-                                        resamplers.push(Some(Resampler::new(
-                                            spec,
-                                            proxy.sample_rate,
-                                            duration,
-                                        )));
-                                    } else {
-                                        resamplers.push(None);
-                                    }
+                            let spec = decoded.spec();
+                            let duration = decoded.capacity() as u64;
+                            for (proxy, resampler) in self.device_proxies.iter_mut() {
+                                if resampler.is_none() && proxy.sample_rate != spec.rate {
+                                    *resampler =
+                                        Some(Resampler::new(*spec, proxy.sample_rate, duration));
                                 }
-                                first_packet = false;
                             }
-                            send_decoded_packet(&proxies, &mut resamplers, decoded);
+                            send_decoded_packet(&mut self.device_proxies, decoded, {
+                                *volume.read().unwrap()
+                            });
                             if let Some(time_base) = time_base {
                                 let new_elapsed = time_base.calc_time(packet.ts).seconds;
-                                if new_elapsed != prev_elapsed {
+                                if new_elapsed != self.local_elapsed {
                                     *elapsed.write().unwrap() = new_elapsed;
-                                    prev_elapsed = new_elapsed;
+                                    self.local_elapsed = new_elapsed;
                                 }
                             }
                         }
@@ -232,7 +243,8 @@ impl Decoder {
                         if matches!(e.kind(), io::ErrorKind::UnexpectedEof) =>
                     {
                         // the entire song has been processed
-                        stop_decoding(&proxies, &elapsed);
+                        self.stop();
+                        *elapsed.write().unwrap() = 0;
                         break;
                     }
                     _ => bail!(e),

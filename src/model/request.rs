@@ -34,11 +34,13 @@ pub struct EnableArgs(pub String);
 pub enum DeviceRequestKind {
     Disable(DisableArgs),
     Enable(EnableArgs),
+    ListDevices,
 }
 
 pub struct SeekArgs(pub i64); // in seconds
 pub struct VolumeArgs(pub VolumeRequest);
 pub enum PlaybackRequestKind {
+    Gapless,
     Pause,
     Resume,
     Seek(SeekArgs),
@@ -284,7 +286,9 @@ impl TryFrom<&str> for RequestKind {
 
                 "disable" => RequestKind::Device(Device::Disable(tokens[1..].try_into()?)),
                 "enable" => RequestKind::Device(Device::Enable(tokens[1..].try_into()?)),
-                // TODO: devices (gets all available devices)
+                "listdevices" => RequestKind::Device(Device::ListDevices),
+
+                "gapless" => RequestKind::Playback(Playback::Gapless),
                 "pause" => RequestKind::Playback(Playback::Pause),
                 "resume" => RequestKind::Playback(Playback::Resume),
                 "seek" => RequestKind::Playback(Playback::Seek(tokens[1..].try_into()?)),

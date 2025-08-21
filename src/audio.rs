@@ -6,6 +6,7 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use crossbeam_channel::{self as cbeam_chan, RecvTimeoutError, TryRecvError};
+use serde_json::{Map, Value as JsonValue};
 use std::{
     collections::{HashMap, VecDeque},
     fs::File,
@@ -23,7 +24,8 @@ use crate::{
     model::{
         decoder::{Decoder, DecoderRequest, Seek, Volume},
         device::{BaseSample, Device, DeviceProxy},
-        song::{Song, SongEvent},
+        response::Response,
+        song::{Song, SongEvent, SongProxy},
     },
 };
 
@@ -40,6 +42,7 @@ struct Playback {
     state: PlaybackState,
     volume: Arc<RwLock<Volume>>,
     elapsed: Arc<RwLock<u64>>,
+    gapless: bool,
 }
 
 pub struct Audio {
@@ -51,29 +54,29 @@ pub struct Audio {
 
 impl Audio {
     pub fn new(tx_event: tokio_chan::UnboundedSender<SongEvent>) -> Self {
+        let devices = audio_utils::output_devices()
+            .into_iter()
+            .filter_map(|d| {
+                let name = d.name().unwrap_or(constants::UNKNOWN_DEVICE.into());
+                match Device::try_from(d) {
+                    Ok(device) => Some((name, device)),
+                    Err(_) => None,
+                }
+            })
+            .collect();
+
         Self {
             playback: Playback::default(),
-            devices: HashMap::new(),
+            devices,
             tx_request: None,
             tx_event,
         }
     }
 
-    pub fn with_default(mut self, default_devices_names: &[String]) -> Self {
-        for name in default_devices_names.iter() {
-            if let Err(e) = self.add_device(name).and_then(|_| self.enable_device(name)) {
-                log::error!("could not add device {} ({})", name, e);
-            }
-        }
-
-        self
-    }
-
-    pub fn play(&mut self, mut decoder: Decoder) -> Result<()> {
+    pub fn play(&mut self, song_proxy: SongProxy) -> Result<()> {
         let volume = Arc::clone(&self.playback.volume);
         let elapsed = Arc::clone(&self.playback.elapsed);
         let (tx_request, rx_request) = crossbeam_channel::unbounded();
-        let sample_rate = decoder.sample_rate();
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.play(self.tx_event.clone())?;
         }
@@ -86,10 +89,11 @@ impl Audio {
             bail!("playback error (all audio devices are disabled)");
         }
         if let Some(tx_request) = &self.tx_request {
-            tx_request.send(DecoderRequest::Stop);
+            let _ = tx_request.send(DecoderRequest::Stop);
         }
+        let mut decoder = Decoder::try_new(song_proxy, device_proxies, self.playback.gapless)?;
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = decoder.run(device_proxies, rx_request, volume, elapsed) {
+            if let Err(e) = decoder.run(rx_request, volume, elapsed) {
                 log::error!("decoder error ({})", e);
             }
         });
@@ -99,12 +103,23 @@ impl Audio {
         Ok(())
     }
 
-    pub fn add_device(&mut self, device_name: &str) -> Result<()> {
-        let cpal_device = audio_utils::get_device_by_name(device_name)?;
-        let device = Device::try_from(cpal_device)?;
-        self.devices.insert(String::from(device_name), device);
+    pub fn find_device_by_name(&self, device_name: &str) -> Option<&Device> {
+        self.devices.get(device_name)
+    }
 
-        Ok(())
+    pub fn with_default(mut self, default_devices_names: &[String]) -> Self {
+        for name in default_devices_names.iter() {
+            match self.devices.get(name) {
+                Some(device) => {
+                    if let Err(e) = self.enable_device(name) {
+                        log::error!("could not enable device `{}` ({})", name, e);
+                    }
+                }
+                None => log::error!("device `{}` not found", name),
+            }
+        }
+
+        self
     }
 
     pub fn disable_device(&mut self, device_name: String) -> Result<()> {
@@ -131,7 +146,7 @@ impl Audio {
                     if res.is_ok()
                         && let Some(tx_request) = &self.tx_request
                     {
-                        let proxy = DeviceProxy::try_new(&device).unwrap();
+                        let proxy = DeviceProxy::try_new(device).unwrap();
                         let _ = tx_request.send(DecoderRequest::Enable(proxy));
                     }
 
@@ -140,6 +155,28 @@ impl Audio {
             },
             None => bail!(format!("device {} not found", device_name)),
         }
+    }
+
+    pub fn list_devices(&self) -> Response {
+        let devices: Vec<_> = self
+            .devices
+            .values()
+            .map(|d| {
+                let mut json_map = Map::new();
+                json_map.insert(
+                    "name".into(),
+                    d.name().unwrap_or(constants::UNKNOWN_DEVICE.into()).into(),
+                );
+                json_map.insert("enabled".into(), d.is_enabled().into());
+
+                json_map
+            })
+            .collect();
+        Response::new_ok().with_item("devices".into(), &devices)
+    }
+
+    pub fn toggle_gapless(&mut self) {
+        self.playback.gapless ^= true;
     }
 
     pub fn pause(&mut self) -> Result<()> {
@@ -172,7 +209,7 @@ impl Audio {
         }
         self.playback.state = PlaybackState::Stopped;
         if let Some(tx_request) = &self.tx_request {
-            tx_request.send(DecoderRequest::Stop);
+            let _ = tx_request.send(DecoderRequest::Stop);
         }
         let _ = self.tx_request.take();
 
@@ -234,27 +271,10 @@ impl Audio {
 mod audio_utils {
     use super::*;
 
-    pub fn get_device_by_name(device_name: &str) -> Result<CpalDevice> {
+    pub fn output_devices() -> Vec<CpalDevice> {
         let host = cpal::default_host();
-        match host
-            .output_devices()?
-            .find(|x| x.name().map(|s| s == device_name).unwrap_or(false))
-        {
-            Some(device) => Ok(device),
-            None => {
-                let mut err_msg = format!(
-                    "audio device `{}` unavailable, available devices: ",
-                    device_name
-                );
-                for name in host
-                    .output_devices()?
-                    .map(|d| d.name().unwrap_or(constants::UNKNOWN_DEVICE.into()))
-                {
-                    err_msg += &name;
-                    err_msg.push(',');
-                }
-                bail!(err_msg)
-            }
-        }
+        host.output_devices()
+            .map(|devices| devices.collect::<Vec<_>>())
+            .unwrap_or_default()
     }
 }

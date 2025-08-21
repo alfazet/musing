@@ -53,7 +53,6 @@ pub struct Device {
     state: DeviceState,
 }
 
-// a lightweight struct allowing the decoder to access the device
 pub struct DeviceProxy {
     pub name: String,
     pub sample_rate: u32,
@@ -143,6 +142,10 @@ impl Device {
 
     pub fn is_enabled(&self) -> bool {
         !matches!(self.state, DeviceState::Disabled)
+    }
+
+    pub fn name(&self) -> Result<String> {
+        self.cpal_device.name().map_err(|e| e.into())
     }
 
     pub fn disable(&mut self) {

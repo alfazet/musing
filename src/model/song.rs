@@ -32,6 +32,10 @@ pub struct Song {
     pub metadata: Metadata,
 }
 
+pub struct SongProxy {
+    pub path: PathBuf, // absolute path
+}
+
 #[derive(Debug)]
 pub enum SongEvent {
     Over,
@@ -87,7 +91,15 @@ impl TryFrom<&Path> for Song {
     }
 }
 
-impl Song {
+impl From<&Song> for SongProxy {
+    fn from(song: &Song) -> SongProxy {
+        Self {
+            path: song.path.clone(),
+        }
+    }
+}
+
+impl SongProxy {
     pub fn demuxer(&self, gapless: bool) -> Result<Box<dyn FormatReader>> {
         let probe_res = song_utils::get_probe_result(&self.path, gapless)?;
         Ok(probe_res.format)

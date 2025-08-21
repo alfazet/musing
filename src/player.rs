@@ -19,7 +19,7 @@ use crate::{
         queue::Queue,
         request::{self, Request, RequestKind},
         response::Response,
-        song::{Song, SongEvent},
+        song::{Song, SongEvent, SongProxy},
     },
 };
 
@@ -32,7 +32,7 @@ struct Player {
 }
 
 impl Player {
-    fn song_by_db_id(&self, db_id: u32) -> Result<&Song> {
+    fn song_by_db_id(&self, db_id: u32) -> Result<SongProxy> {
         let Some(song) = self.database.song_by_id(db_id) else {
             bail!(format!(
                 "song with id `{}` not found in the database",
@@ -40,14 +40,13 @@ impl Player {
             ));
         };
 
-        Ok(song)
+        Ok(song.into())
     }
 
     fn play(&mut self, db_id: u32) -> Result<()> {
         self.queue.add_current_to_history();
-        let song = self.song_by_db_id(db_id)?;
-        let decoder = Decoder::try_new(song, true)?;
-        self.audio.play(decoder)?;
+        let song_proxy = self.song_by_db_id(db_id)?;
+        self.audio.play(song_proxy)?;
 
         Ok(())
     }
@@ -108,6 +107,7 @@ impl Player {
                 let EnableArgs(device) = args;
                 self.audio.enable_device(&device).into()
             }
+            DeviceRequestKind::ListDevices => self.audio.list_devices(),
         }
     }
 
@@ -115,6 +115,10 @@ impl Player {
         use request::{PlaybackRequestKind, SeekArgs, VolumeArgs, VolumeRequest};
 
         match req {
+            PlaybackRequestKind::Gapless => {
+                self.audio.toggle_gapless();
+                Response::new_ok()
+            }
             PlaybackRequestKind::Pause => self.audio.pause().into(),
             PlaybackRequestKind::Resume => self.audio.resume().into(),
             PlaybackRequestKind::Seek(args) => {
@@ -229,6 +233,7 @@ impl Player {
                 Response::new_ok().with_item("queue".into(), &self.queue.as_inner())
             }
             StatusRequestKind::State => {
+                // TODO: also return stuff like gapless/random/single from here
                 Response::new_ok().with_item("state".into(), &self.audio.state())
             }
             StatusRequestKind::Volume => {
