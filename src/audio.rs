@@ -42,6 +42,7 @@ struct Playback {
     state: PlaybackState,
     volume: Arc<RwLock<Volume>>,
     elapsed: Arc<RwLock<u64>>,
+    duration: u64,
     gapless: bool,
 }
 
@@ -54,21 +55,6 @@ pub struct Audio {
 
 impl Audio {
     pub fn new(tx_event: tokio_chan::UnboundedSender<SongEvent>) -> Self {
-        // for some reason iterating over devices *sometimes* causes audio to break in the entire OS
-        // so for the time being simultaneous output to many devices is disabled
-        // this seems to be a problem with CPAL
-        //
-        // let devices = audio_utils::output_devices()
-        //     .into_iter()
-        //     .filter_map(|d| {
-        //         let name = d.name().unwrap_or(constants::UNKNOWN_DEVICE.into());
-        //         match Device::try_from(d) {
-        //             Ok(device) => Some((name, device)),
-        //             Err(_) => None,
-        //         }
-        //     })
-        //     .collect();
-
         Self {
             playback: Playback::default(),
             devices: HashMap::new(),
@@ -96,6 +82,7 @@ impl Audio {
             let _ = tx_request.send(DecoderRequest::Stop);
         }
         let mut decoder = Decoder::try_new(song_proxy, device_proxies, self.playback.gapless)?;
+        self.playback.duration = decoder.duration().unwrap_or_default();
         tokio::task::spawn_blocking(move || {
             if let Err(e) = decoder.run(rx_request, volume, elapsed) {
                 log::error!("decoder error ({})", e);
@@ -105,10 +92,6 @@ impl Audio {
         self.playback.state = PlaybackState::Playing;
 
         Ok(())
-    }
-
-    pub fn find_device_by_name(&self, device_name: &str) -> Option<&Device> {
-        self.devices.get(device_name)
     }
 
     // use either the system's default audio output device or the provided one
@@ -277,6 +260,10 @@ impl Audio {
 
     pub fn elapsed(&self) -> u64 {
         *self.playback.elapsed.read().unwrap()
+    }
+
+    pub fn duration(&self) -> u64 {
+        self.playback.duration
     }
 
     pub fn state(&self) -> u8 {

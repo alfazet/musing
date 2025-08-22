@@ -232,9 +232,9 @@ impl Player {
                 Some(entry) => Response::new_ok().with_item("current".into(), &entry),
                 None => Response::new_err("no song is playing right now".into()),
             },
-            StatusRequestKind::Elapsed => {
-                Response::new_ok().with_item("elapsed".into(), &self.audio.elapsed())
-            }
+            StatusRequestKind::Elapsed => Response::new_ok()
+                .with_item("elapsed".into(), &self.audio.elapsed())
+                .with_item("out_of".into(), &self.audio.duration()),
             StatusRequestKind::Queue => {
                 Response::new_ok().with_item("queue".into(), &self.queue.as_inner())
             }

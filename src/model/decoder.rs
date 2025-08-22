@@ -100,7 +100,10 @@ impl Decoder {
 
     fn seek(&mut self, seek: Seek) {
         let target_elapsed = match seek {
-            Seek::Forwards(secs) => self.local_elapsed.saturating_add(secs),
+            Seek::Forwards(secs) => self
+                .local_elapsed
+                .saturating_add(secs)
+                .min(self.duration().unwrap_or(u64::MAX)),
             Seek::Backwards(secs) => self.local_elapsed.saturating_sub(secs),
         };
         let target_time = Time {
@@ -111,7 +114,7 @@ impl Decoder {
             time: target_time,
             track_id: Some(self.track_id),
         };
-        let _ = self.demuxer.seek(SeekMode::Coarse, seek_to);
+        let seeked_to = self.demuxer.seek(SeekMode::Coarse, seek_to);
         self.decoder.reset();
     }
 
@@ -258,6 +261,16 @@ impl Decoder {
 
     pub fn sample_rate(&self) -> Option<u32> {
         self.decoder.codec_params().sample_rate
+    }
+
+    pub fn duration(&self) -> Option<u64> {
+        match (
+            self.decoder.codec_params().time_base,
+            self.decoder.codec_params().n_frames,
+        ) {
+            (Some(tb), Some(n)) => Some(tb.calc_time(n).seconds),
+            _ => None,
+        }
     }
 }
 
