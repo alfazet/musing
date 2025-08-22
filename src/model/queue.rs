@@ -131,9 +131,13 @@ impl Queue {
         }
         if let Some(random) = &mut self.random {
             // insert into a random spot in constant time
-            let random_pos = random.rng.random_range(0..random.ids.len());
-            let temp = mem::replace(&mut random.ids[random_pos], entry.queue_id);
-            random.ids.push(temp);
+            if random.ids.is_empty() {
+                random.ids.push(entry.queue_id);
+            } else {
+                let random_pos = random.rng.random_range(0..random.ids.len());
+                let temp = mem::replace(&mut random.ids[random_pos], entry.queue_id);
+                random.ids.push(temp);
+            }
         }
     }
 

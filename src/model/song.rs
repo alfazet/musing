@@ -46,7 +46,7 @@ impl From<&MetadataRevision> for Metadata {
         let mut data = HashMap::new();
         for tag in revision.tags() {
             if let Some(tag_key) = tag.std_key.and_then(|key| TagKey::try_from(key).ok()) {
-                data.insert(tag_key, tag.value.to_string());
+                data.entry(tag_key).or_insert_with(|| tag.value.to_string());
             }
         }
 
@@ -71,20 +71,20 @@ impl TryFrom<&Path> for Song {
 
     fn try_from(path: &Path) -> Result<Self> {
         let mut probe_res = song_utils::get_probe_result(path, false)?;
-        let metadata_probe = probe_res
-            .metadata
-            .get()
-            .map(|m| m.current().map(Metadata::from).unwrap_or_default())
-            .unwrap_or_default();
         let metadata_container = probe_res
             .format
             .metadata()
             .current()
             .map(Metadata::from)
             .unwrap_or_default();
+        let metadata_probe = probe_res
+            .metadata
+            .get()
+            .map(|m| m.current().map(Metadata::from).unwrap_or_default())
+            .unwrap_or_default();
         let song = Self {
             path: path.to_path_buf(),
-            metadata: metadata_probe.merge(metadata_container),
+            metadata: metadata_container.merge(metadata_probe),
         };
 
         Ok(song)
