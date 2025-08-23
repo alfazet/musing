@@ -1,4 +1,3 @@
-use anyhow::Result;
 use rand::{prelude::*, seq::SliceRandom};
 use std::{collections::HashSet, mem};
 
@@ -21,7 +20,7 @@ struct Random {
 }
 
 #[derive(Debug, Default)]
-pub enum QueueMode {
+enum QueueMode {
     #[default]
     Sequential,
     Single,

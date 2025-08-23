@@ -1,14 +1,8 @@
 use anyhow::{Result, anyhow, bail};
-use tokio::sync::{
-    mpsc::{self as tokio_chan},
-    oneshot,
-};
+use tokio::sync::oneshot;
 
 use crate::{
-    model::{
-        comparator::Comparator, decoder::Volume, filter::FilterExpr, queue::QueueMode,
-        response::Response, tag_key::TagKey,
-    },
+    model::{comparator::Comparator, filter::FilterExpr, response::Response, tag_key::TagKey},
     parsers::request,
 };
 

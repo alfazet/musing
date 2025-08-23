@@ -1,7 +1,7 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use std::{
     iter::Peekable,
-    str::{self, FromStr},
+    str::{self},
 };
 
 use crate::model::filter::*;

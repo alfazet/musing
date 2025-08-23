@@ -1,22 +1,12 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use cpal::{
-    BufferSize, Data as CpalData, Device as CpalDevice, FromSample, OutputCallbackInfo,
-    SampleFormat, SampleRate, SizedSample, StreamConfig, SupportedStreamConfig,
+    Device as CpalDevice, FromSample, OutputCallbackInfo, SampleFormat, SizedSample,
+    SupportedStreamConfig,
     platform::Stream as CpalStream,
-    traits::{DeviceTrait, HostTrait, StreamTrait},
+    traits::{DeviceTrait, StreamTrait},
 };
-use crossbeam_channel::{self as cbeam_chan, RecvTimeoutError, TryRecvError};
-use std::{
-    collections::{HashMap, VecDeque},
-    fs::File,
-    sync::{Arc, Mutex, RwLock},
-    time::{Duration, Instant},
-};
-use symphonia::core::units::TimeBase;
-use tokio::{
-    sync::mpsc::{self as tokio_chan},
-    task::{self, JoinHandle},
-};
+use crossbeam_channel::{self as cbeam_chan};
+use tokio::sync::mpsc::{self as tokio_chan};
 
 use crate::{constants, model::song::SongEvent};
 
@@ -81,7 +71,7 @@ impl Device {
     where
         T: Sample,
     {
-        let callback = move |data: &mut [T], x: &OutputCallbackInfo| {
+        let callback = move |data: &mut [T], _: &OutputCallbackInfo| {
             let mut i = 0;
             while let Ok(s) = rx_sample.try_recv() {
                 // NAN == the end of this song
@@ -153,18 +143,20 @@ impl Device {
         self.state = DeviceState::Disabled;
     }
 
+    // returns Some(true) if the device had been disabled before
     pub fn enable(
         &mut self,
         tx_event: Option<tokio_chan::UnboundedSender<SongEvent>>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if let DeviceState::Disabled = self.state {
             self.state = DeviceState::Idle;
             if let Some(tx_event) = tx_event {
                 self.play(tx_event)?;
             }
+            return Ok(true);
         }
 
-        Ok(())
+        Ok(false)
     }
 
     pub fn play(&mut self, tx_event: tokio_chan::UnboundedSender<SongEvent>) -> Result<()> {

@@ -92,7 +92,6 @@ impl Config {
     pub fn merge_with_cli(self, cli_opts: CliOptions) -> Self {
         let server_config = ServerConfig {
             port: cli_opts.port.unwrap_or(self.server_config.port),
-            ..self.server_config
         };
         let player_config = PlayerConfig {
             audio_device: cli_opts.audio_device,

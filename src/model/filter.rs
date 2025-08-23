@@ -1,13 +1,9 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use regex::Regex;
-use std::fmt::{self, Display, Formatter};
 use unidecode::unidecode;
 
 use crate::{
-    model::{
-        song::{Metadata, Song},
-        tag_key::TagKey,
-    },
+    model::{song::Song, tag_key::TagKey},
     parsers::filter as parser,
 };
 

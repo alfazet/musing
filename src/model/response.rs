@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use erased_serde::Serialize as ErasedSerialize;
 use serde_json::{self, Map, Value as JsonValue};
 use std::fmt::{self, Display, Formatter};

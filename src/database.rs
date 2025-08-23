@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 use jwalk::WalkDir;
 use rayon::prelude::*;
-use serde_json::{Map, Value as JsonValue};
+use serde_json::Map;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
@@ -11,12 +11,9 @@ use std::{
 };
 
 use crate::model::{
-    comparator::Comparator,
-    filter::FilterExpr,
     request::{MetadataArgs, SelectArgs, UniqueArgs},
     response::Response,
     song::{Metadata, Song},
-    tag_key::TagKey,
 };
 
 struct DataRow {
@@ -116,7 +113,7 @@ impl Database {
     }
 
     // get ids of songs matching `filter_expr`, sorted by the comparators in `sort_by`
-    fn select(&self, filter_expr: FilterExpr, sort_by: Vec<Comparator>) -> Vec<u32> {
+    pub fn select(&self, SelectArgs(filter_expr, sort_by): SelectArgs) -> Response {
         let compare = |lhs: &Metadata, rhs: &Metadata| -> Ordering {
             sort_by
                 .iter()
@@ -131,16 +128,8 @@ impl Database {
             .filter(|row| filter_expr.evaluate(&row.song))
             .collect();
         filtered.par_sort_by(|lhs, rhs| compare(&lhs.song.metadata, &rhs.song.metadata));
+        let ids: Vec<_> = filtered.into_par_iter().map(|row| row.id).collect();
 
-        filtered.into_par_iter().map(|row| row.id).collect()
-    }
-
-    pub fn select_inner(&self, SelectArgs(filter_expr, sort_by): SelectArgs) -> Vec<u32> {
-        self.select(filter_expr, sort_by)
-    }
-
-    pub fn select_outer(&self, SelectArgs(filter_expr, sort_by): SelectArgs) -> Response {
-        let ids = self.select(filter_expr, sort_by);
         Response::new_ok().with_item("ids".into(), &ids)
     }
 

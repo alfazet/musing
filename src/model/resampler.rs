@@ -19,63 +19,54 @@ impl<T> Resampler<T>
 where
     T: Sample + FromSample<BaseSample> + IntoSample<BaseSample>,
 {
-    fn resample_inner(&mut self) -> &[T] {
-        {
-            let mut in_channels = Vec::with_capacity(self.input.len());
-            for channel in self.input.iter() {
-                in_channels.push(&channel[..self.duration]);
-            }
-            let _ = self
-                .resampler
-                .process_into_buffer(&in_channels, &mut self.output, None);
-        }
-        for channel in self.input.iter_mut() {
-            channel.drain(0..self.duration);
-        }
-        let num_channels = self.output.len();
-        self.interleaved
-            .resize(num_channels * self.output[0].len(), T::MID);
-        for (i, frame) in self.interleaved.chunks_exact_mut(num_channels).enumerate() {
-            for (chan, s) in frame.iter_mut().enumerate() {
-                *s = self.output[chan][i].into_sample();
-            }
-        }
-
-        &self.interleaved
-    }
-}
-
-impl<T> Resampler<T>
-where
-    T: Sample + FromSample<BaseSample> + IntoSample<BaseSample>,
-{
     pub fn new(spec: SignalSpec, out_rate: u32, duration: u64) -> Self {
         let duration = duration as usize;
         let n_channels = spec.channels.count();
         let (in_rate, out_rate) = (spec.rate as usize, out_rate as usize);
         let resampler =
             FftFixedIn::<BaseSample>::new(in_rate, out_rate, duration, 2, n_channels).unwrap();
-        let output = FftFixedIn::output_buffer_allocate(&resampler);
         let input = vec![Vec::with_capacity(duration); n_channels];
+        let output = FftFixedIn::output_buffer_allocate(&resampler, true);
         let interleaved = Vec::new();
 
         Self {
             resampler,
             input,
             output,
-            duration,
             interleaved,
+            duration,
         }
     }
 
-    pub fn resample(&mut self, input: &AudioBufferRef<'_>) -> Option<&[T]> {
-        convert_samples(input, &mut self.input);
-        // not enough samples to resample
+    pub fn resample(&mut self, samples: &AudioBufferRef<'_>) -> Option<&[T]> {
+        convert_samples(samples, &mut self.input);
+        // not enough samples to succesfully resample
         if self.input[0].len() < self.duration {
             return None;
         }
 
-        Some(self.resample_inner())
+        let (_, n_written) = {
+            let mut in_channels = Vec::with_capacity(self.input.len());
+            for channel in self.input.iter() {
+                in_channels.push(&channel[..self.duration]);
+            }
+
+            self.resampler
+                .process_into_buffer(&in_channels, &mut self.output, None)
+                .unwrap()
+        };
+        for channel in self.input.iter_mut() {
+            channel.drain(0..self.duration);
+        }
+        let num_channels = self.output.len();
+        self.interleaved.resize(num_channels * n_written, T::MID);
+        for (i, frame) in self.interleaved.chunks_exact_mut(num_channels).enumerate() {
+            for (chan, s) in frame.iter_mut().enumerate() {
+                *s = self.output[chan][i].into_sample();
+            }
+        }
+
+        Some(&self.interleaved)
     }
 }
 

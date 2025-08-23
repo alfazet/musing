@@ -1,13 +1,7 @@
 use anyhow::{Result, bail};
-use std::pin::Pin;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    sync::{
-        mpsc::{self as tokio_chan},
-        oneshot,
-    },
-    task,
+use tokio::sync::{
+    mpsc::{self as tokio_chan},
+    oneshot,
 };
 
 use crate::{
@@ -15,11 +9,10 @@ use crate::{
     config::PlayerConfig,
     database::Database,
     model::{
-        decoder::Decoder,
         queue::Queue,
         request::{self, Request, RequestKind},
         response::Response,
-        song::{Song, SongEvent, SongProxy},
+        song::{SongEvent, SongProxy},
     },
 };
 
@@ -84,7 +77,7 @@ impl Player {
                         let _ = self.audio.stop();
                         self.database.reset()
                     }
-                    DbRequestKind::Select(args) => self.database.select_outer(args),
+                    DbRequestKind::Select(args) => self.database.select(args),
                     DbRequestKind::Unique(args) => self.database.unique(args),
                     DbRequestKind::Update => self.database.update(),
                 };

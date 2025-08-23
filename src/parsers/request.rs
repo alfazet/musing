@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use std::mem;
 
 // based on https://github.com/tmiasko/shell-words/

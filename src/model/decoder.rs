@@ -1,29 +1,21 @@
 use anyhow::{Result, anyhow, bail};
-use crossbeam_channel::{self as cbeam_chan, RecvTimeoutError, TryRecvError};
+use crossbeam_channel::{self as cbeam_chan, TryRecvError};
 use std::{
-    io, mem,
+    io,
     sync::{Arc, RwLock},
 };
 use symphonia::core::{
     audio::{AudioBufferRef, SampleBuffer},
     codecs::{Decoder as SymphoniaDecoder, DecoderOptions as SymphoniaDecoderOptions},
-    conv::{ConvertibleSample, FromSample},
     errors::Error as SymphoniaError,
-    formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track},
-    io::MediaSourceStream,
-    meta::{self, Metadata, MetadataOptions, MetadataRevision},
-    probe::{Hint, ProbeResult, ProbedMetadata},
+    formats::{FormatReader, SeekMode, SeekTo},
     units::Time,
-};
-use tokio::{
-    sync::mpsc::{self as tokio_chan},
-    task,
 };
 
 use crate::model::{
     device::{BaseSample, DeviceProxy},
     resampler::Resampler,
-    song::{Song, SongEvent, SongProxy},
+    song::SongProxy,
 };
 
 const BASE_SAMPLE_MIN: BaseSample = -1.0;
@@ -114,7 +106,7 @@ impl Decoder {
             time: target_time,
             track_id: Some(self.track_id),
         };
-        let seeked_to = self.demuxer.seek(SeekMode::Coarse, seek_to);
+        let _ = self.demuxer.seek(SeekMode::Coarse, seek_to);
         self.decoder.reset();
     }
 
@@ -183,21 +175,7 @@ impl Decoder {
 
         self.local_elapsed = 0;
         let time_base = self.decoder.codec_params().time_base;
-        let mut resamplers: Vec<Option<Resampler<BaseSample>>> = Vec::new();
         loop {
-            // don't proceed if there are no devices to receive the samples
-            while self.device_proxies.is_empty() {
-                match rx_request.recv() {
-                    Ok(request) => {
-                        if self.handle_request(request) {
-                            *elapsed.write().unwrap() = 0;
-                            break;
-                        }
-                    }
-                    // the player went out of scope (due to an error or a Ctrl+C)
-                    Err(_) => return Ok(()),
-                }
-            }
             match rx_request.try_recv() {
                 Ok(request) => {
                     if self.handle_request(request) {
@@ -257,10 +235,6 @@ impl Decoder {
         }
 
         Ok(())
-    }
-
-    pub fn sample_rate(&self) -> Option<u32> {
-        self.decoder.codec_params().sample_rate
     }
 
     pub fn duration(&self) -> Option<u64> {

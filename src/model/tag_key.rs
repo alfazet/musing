@@ -3,7 +3,6 @@ use lazy_static::lazy_static;
 use std::{
     collections::HashMap,
     fmt::{self, Display, Formatter},
-    str::FromStr,
 };
 use symphonia::core::meta::StandardTagKey;
 

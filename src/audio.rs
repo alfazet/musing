@@ -1,31 +1,23 @@
 use anyhow::{Result, anyhow, bail};
 use cpal::{
-    BufferSize, Data as CpalData, Device as CpalDevice, FromSample, OutputCallbackInfo,
-    SampleFormat, SampleRate, SizedSample, StreamConfig, SupportedStreamConfig,
-    platform::Stream as CpalStream,
-    traits::{DeviceTrait, HostTrait, StreamTrait},
+    Device as CpalDevice,
+    traits::{DeviceTrait, HostTrait},
 };
-use crossbeam_channel::{self as cbeam_chan, RecvTimeoutError, TryRecvError};
-use serde_json::{Map, Value as JsonValue};
+use crossbeam_channel::{self as cbeam_chan};
+use serde_json::Map;
 use std::{
-    collections::{HashMap, VecDeque},
-    fs::File,
-    sync::{Arc, Mutex, RwLock},
-    time::{Duration, Instant},
+    collections::HashMap,
+    sync::{Arc, RwLock},
 };
-use symphonia::core::units::TimeBase;
-use tokio::{
-    sync::mpsc::{self as tokio_chan},
-    task::{self, JoinHandle},
-};
+use tokio::sync::mpsc::{self as tokio_chan};
 
 use crate::{
     constants,
     model::{
         decoder::{Decoder, DecoderRequest, Seek, Volume},
-        device::{BaseSample, Device, DeviceProxy},
+        device::{Device, DeviceProxy},
         response::Response,
-        song::{Song, SongEvent, SongProxy},
+        song::{SongEvent, SongProxy},
     },
 };
 
@@ -49,6 +41,7 @@ struct Playback {
 pub struct Audio {
     playback: Playback,
     devices: HashMap<String, Device>,
+    n_enabled_devices: u8,
     tx_request: Option<cbeam_chan::Sender<DecoderRequest>>,
     tx_event: tokio_chan::UnboundedSender<SongEvent>,
 }
@@ -58,6 +51,7 @@ impl Audio {
         Self {
             playback: Playback::default(),
             devices: HashMap::new(),
+            n_enabled_devices: 0,
             tx_request: None,
             tx_event,
         }
@@ -122,22 +116,26 @@ impl Audio {
     }
 
     pub fn disable_device(&mut self, device_name: String) -> Result<()> {
+        if self.n_enabled_devices == 1 {
+            bail!("at least one device must be enabled");
+        }
         let res = self
             .devices
             .get_mut(&device_name)
             .ok_or(anyhow!(format!("device {} not found", &device_name)))
             .map(|d| d.disable());
-        if res.is_ok()
-            && let Some(tx_request) = &self.tx_request
-        {
-            let _ = tx_request.send(DecoderRequest::Disable(device_name));
+        if res.is_ok() {
+            self.n_enabled_devices -= 1;
+            if let Some(tx_request) = &self.tx_request {
+                let _ = tx_request.send(DecoderRequest::Disable(device_name));
+            }
         }
 
         res
     }
 
     pub fn enable_device(&mut self, device_name: &str) -> Result<()> {
-        match self.devices.get_mut(device_name) {
+        let res = match self.devices.get_mut(device_name) {
             Some(device) => match self.playback.state {
                 PlaybackState::Stopped => device.enable(None),
                 _ => {
@@ -153,7 +151,14 @@ impl Audio {
                 }
             },
             None => bail!(format!("device {} not found", device_name)),
+        };
+        if let Ok(new_enabled) = res
+            && new_enabled
+        {
+            self.n_enabled_devices += 1;
         }
+
+        res.map(|_| ())
     }
 
     pub fn list_devices(&self) -> Response {
@@ -277,13 +282,6 @@ mod audio_utils {
     pub fn default_output_device() -> Option<CpalDevice> {
         let host = cpal::default_host();
         host.default_output_device()
-    }
-
-    pub fn output_devices() -> Vec<CpalDevice> {
-        let host = cpal::default_host();
-        host.output_devices()
-            .map(|devices| devices.collect::<Vec<_>>())
-            .unwrap_or_default()
     }
 
     pub fn device_by_name(device_name: &str) -> Result<CpalDevice> {

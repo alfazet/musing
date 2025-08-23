@@ -1,8 +1,7 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
-    signal,
     sync::{
         broadcast,
         mpsc::{self as tokio_chan},

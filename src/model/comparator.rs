@@ -1,11 +1,11 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::Result;
 use std::{
     cmp::Ordering,
     fmt::{self, Display, Formatter},
 };
 
 use crate::model::{
-    song::{Metadata, Song},
+    song::Metadata,
     tag_key::{TagKey, TagKeyKind},
 };
 

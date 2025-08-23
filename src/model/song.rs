@@ -1,21 +1,15 @@
-use anyhow::{Result, anyhow};
-use crossbeam_channel::{RecvTimeoutError, TryRecvError};
+use anyhow::Result;
 use std::{
     collections::HashMap,
     fs::File,
-    mem,
     path::{Path, PathBuf},
 };
 use symphonia::core::{
-    audio::SampleBuffer,
-    codecs::DecoderOptions,
-    conv::ConvertibleSample,
-    formats::{FormatOptions, FormatReader, Track},
+    formats::{FormatOptions, FormatReader},
     io::MediaSourceStream,
-    meta::{self, MetadataOptions, MetadataRevision},
-    probe::{Hint, ProbeResult, ProbedMetadata},
+    meta::{MetadataOptions, MetadataRevision},
+    probe::{Hint, ProbeResult},
 };
-use tokio::sync::mpsc;
 
 use crate::model::tag_key::TagKey;
 
