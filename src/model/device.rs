@@ -157,7 +157,7 @@ impl Device {
         &mut self,
         tx_event: Option<tokio_chan::UnboundedSender<SongEvent>>,
     ) -> Result<()> {
-        if matches!(self.state, DeviceState::Disabled) {
+        if let DeviceState::Disabled = self.state {
             self.state = DeviceState::Idle;
             if let Some(tx_event) = tx_event {
                 self.play(tx_event)?;

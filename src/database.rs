@@ -101,8 +101,8 @@ impl Database {
                 self.data_rows
                     .binary_search_by_key(&id, |row| row.id)
                     .map(|i| {
-                        let data = tags.iter().cloned().map(|tag| {
-                            let value = self.data_rows[i].song.metadata.get(&tag).into();
+                        let data = tags.iter().map(|tag| {
+                            let value = self.data_rows[i].song.metadata.get(tag).into();
                             (tag.to_string(), value)
                         });
 
@@ -169,7 +169,6 @@ impl Database {
             .map(|(combination, values)| {
                 let data = group_by
                     .iter()
-                    .cloned()
                     .map(|tag_key| tag_key.to_string())
                     .zip(combination.into_iter().map(|value| value.into()));
                 let mut json_map = Map::from_iter(data);

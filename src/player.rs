@@ -145,7 +145,7 @@ impl Player {
     }
 
     fn queue_request(&mut self, req: request::QueueRequestKind) -> Response {
-        use request::{AddArgs, ModeArgs, PlayArgs, QueueRequestKind, RemoveArgs};
+        use request::{AddArgs, PlayArgs, QueueRequestKind, RemoveArgs};
 
         match req {
             QueueRequestKind::Add(args) => {
@@ -166,16 +166,15 @@ impl Player {
                 self.queue.clear();
                 self.audio.stop().into()
             }
-            QueueRequestKind::Mode(args) => {
-                let ModeArgs(mode) = args;
-                self.queue.change_mode(mode);
-
-                Response::new_ok()
-            }
+            // QueueRequestKind::Mode(args) => {
+            //     let ModeArgs(mode) = args;
+            //     self.queue.change_mode(mode);
+            //
+            //     Response::new_ok()
+            // }
             QueueRequestKind::Next => {
                 self.move_next_until_playable();
                 if self.queue.current().is_none() {
-                    self.queue.reset_pos();
                     let _ = self.audio.stop();
                 }
 
@@ -194,31 +193,31 @@ impl Player {
             QueueRequestKind::Previous => {
                 self.move_prev_until_playable();
                 if self.queue.current().is_none() {
-                    self.queue.reset_pos();
                     let _ = self.audio.stop();
                 }
 
                 Response::new_ok()
             }
-            // TODO: optimize this
+            QueueRequestKind::Random => {
+                self.queue.start_random();
+                Response::new_ok()
+            }
             QueueRequestKind::Remove(args) => {
                 let RemoveArgs(queue_ids) = args;
                 for queue_id in queue_ids {
-                    match self.queue.remove(queue_id) {
-                        Some(true) => {
-                            self.queue.reset_pos();
-                            let _ = self.audio.stop();
-                        }
-                        None => {
-                            return Response::new_err(format!(
-                                "song with id `{}` not found in the queue",
-                                queue_id
-                            ));
-                        }
-                        _ => (),
+                    if self.queue.remove(queue_id) {
+                        let _ = self.audio.stop();
                     }
                 }
 
+                Response::new_ok()
+            }
+            QueueRequestKind::Sequential => {
+                self.queue.start_sequential();
+                Response::new_ok()
+            }
+            QueueRequestKind::Single => {
+                self.queue.start_single();
                 Response::new_ok()
             }
         }
@@ -265,7 +264,7 @@ impl Player {
         rx_event: tokio_chan::UnboundedReceiver<SongEvent>,
     ) -> Self {
         Self {
-            queue: Queue::default(),
+            queue: Queue::new(),
             database,
             audio,
             rx_request,
