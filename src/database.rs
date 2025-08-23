@@ -83,10 +83,11 @@ impl Database {
     }
 
     // TODO:
-    // get ids of songs located in `path`, if `path` is a file (present in the databse) returns
-    // its song id
-    // (should be parallelizable since it's just a filter)
-    // pub fn ls(&self, LsArgs(path): LsArgs) -> Response {
+    // get (ids, paths) of songs located in `dir`
+    // to be used by people who don't tag their music
+    // and instead rely on the directory tree
+    // (should be parallelizable)
+    // pub fn ls(&self, LsArgs(dir): LsArgs) -> Response {
     //
     // }
 
@@ -109,7 +110,7 @@ impl Database {
             })
             .collect();
 
-        Response::new_ok().with_item("values".into(), &values)
+        Response::new_ok().with_item("values", &values)
     }
 
     // get ids of songs matching `filter_expr`, sorted by the comparators in `sort_by`
@@ -130,7 +131,7 @@ impl Database {
         filtered.par_sort_by(|lhs, rhs| compare(&lhs.song.metadata, &rhs.song.metadata));
         let ids: Vec<_> = filtered.into_par_iter().map(|row| row.id).collect();
 
-        Response::new_ok().with_item("ids".into(), &ids)
+        Response::new_ok().with_item("ids", &ids)
     }
 
     // get unique values of `tag` among songs matching `filter_expr`, grouped by tags in `group_by`
@@ -168,7 +169,7 @@ impl Database {
             })
             .collect();
 
-        Response::new_ok().with_item("values".into(), &values)
+        Response::new_ok().with_item("values", &values)
     }
 
     pub fn update(&mut self) -> Response {
@@ -201,7 +202,7 @@ impl Database {
         self.data_rows.append(&mut new_data_rows);
         self.last_update = SystemTime::now();
 
-        Response::new_ok().with_item("new_files".into(), &new_files.len())
+        Response::new_ok().with_item("new_files", &new_files.len())
     }
 }
 

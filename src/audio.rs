@@ -4,7 +4,6 @@ use cpal::{
     traits::{DeviceTrait, HostTrait},
 };
 use crossbeam_channel::{self as cbeam_chan};
-use serde_json::Map;
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
@@ -16,7 +15,6 @@ use crate::{
     model::{
         decoder::{Decoder, DecoderRequest, Seek, Volume},
         device::{Device, DeviceProxy},
-        response::Response,
         song::{SongEvent, SongProxy},
     },
 };
@@ -161,22 +159,31 @@ impl Audio {
         res.map(|_| ())
     }
 
-    pub fn list_devices(&self) -> Response {
-        let devices: Vec<_> = self
-            .devices
+    pub fn list_devices(&self) -> Vec<(String, bool)> {
+        // let devices: Vec<_> = self
+        //     .devices
+        //     .values()
+        //     .map(|d| {
+        //         let mut json_map = Map::new();
+        //         json_map.insert(
+        //             "name".into(),
+        //             d.name().unwrap_or(constants::UNKNOWN_DEVICE.into()).into(),
+        //         );
+        //         json_map.insert("enabled".into(), d.is_enabled().into());
+        //
+        //         json_map
+        //     })
+        //     .collect();
+        // Response::new_ok().with_item("devices", &devices)
+        self.devices
             .values()
             .map(|d| {
-                let mut json_map = Map::new();
-                json_map.insert(
-                    "name".into(),
-                    d.name().unwrap_or(constants::UNKNOWN_DEVICE.into()).into(),
-                );
-                json_map.insert("enabled".into(), d.is_enabled().into());
-
-                json_map
+                (
+                    d.name().unwrap_or(constants::UNKNOWN_DEVICE.into()),
+                    d.is_enabled(),
+                )
             })
-            .collect();
-        Response::new_ok().with_item("devices".into(), &devices)
+            .collect()
     }
 
     pub fn toggle_gapless(&mut self) {
@@ -207,7 +214,7 @@ impl Audio {
         Ok(())
     }
 
-    pub fn stop(&mut self) -> Result<()> {
+    pub fn stop(&mut self) {
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.stop();
         }
@@ -216,8 +223,6 @@ impl Audio {
             let _ = tx_request.send(DecoderRequest::Stop);
         }
         let _ = self.tx_request.take();
-
-        Ok(())
     }
 
     pub fn toggle(&mut self) -> Result<()> {
@@ -252,7 +257,7 @@ impl Audio {
                 v.saturating_add(delta.unsigned_abs())
             }
         }
-        .into()
+        .into();
     }
 
     pub fn set_volume(&mut self, new_v: u8) {

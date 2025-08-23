@@ -1,4 +1,5 @@
 use anyhow::{Result, bail};
+use serde_json::Map;
 use tokio::sync::{
     mpsc::{self as tokio_chan},
     oneshot,
@@ -65,16 +66,16 @@ impl Player {
     // database requests are blocking and (mostly) parallelizable,
     // so we send them to rayon's thread pool
     async fn db_request(&mut self, req: request::DbRequestKind) -> Response {
-        use request::DbRequestKind;
-
         let (tx, rx) = oneshot::channel();
         rayon::scope(|s| {
             s.spawn(|_| {
+                use request::DbRequestKind;
+
                 let response = match req {
                     DbRequestKind::Metadata(args) => self.database.metadata(args),
                     DbRequestKind::Reset => {
                         self.queue.clear();
-                        let _ = self.audio.stop();
+                        self.audio.stop();
                         self.database.reset()
                     }
                     DbRequestKind::Select(args) => self.database.select(args),
@@ -100,7 +101,16 @@ impl Player {
                 let EnableArgs(device) = args;
                 self.audio.enable_device(&device).into()
             }
-            DeviceRequestKind::ListDevices => self.audio.list_devices(),
+            DeviceRequestKind::ListDevices => {
+                let devices = Map::from_iter(
+                    self.audio
+                        .list_devices()
+                        .into_iter()
+                        .map(|(d, enabled)| (d, enabled.into())),
+                );
+
+                Response::new_ok().with_item("devices", &devices)
+            }
         }
     }
 
@@ -122,7 +132,9 @@ impl Player {
             }
             PlaybackRequestKind::Stop => {
                 self.queue.reset_pos();
-                self.audio.stop().into()
+                self.audio.stop();
+
+                Response::new_ok()
             }
             PlaybackRequestKind::Toggle => self.audio.toggle().into(),
             PlaybackRequestKind::Volume(args) => {
@@ -157,18 +169,14 @@ impl Player {
             }
             QueueRequestKind::Clear => {
                 self.queue.clear();
-                self.audio.stop().into()
+                self.audio.stop();
+
+                Response::new_ok()
             }
-            // QueueRequestKind::Mode(args) => {
-            //     let ModeArgs(mode) = args;
-            //     self.queue.change_mode(mode);
-            //
-            //     Response::new_ok()
-            // }
             QueueRequestKind::Next => {
                 self.move_next_until_playable();
                 if self.queue.current().is_none() {
-                    let _ = self.audio.stop();
+                    self.audio.stop();
                 }
 
                 Response::new_ok()
@@ -186,7 +194,7 @@ impl Player {
             QueueRequestKind::Previous => {
                 self.move_prev_until_playable();
                 if self.queue.current().is_none() {
-                    let _ = self.audio.stop();
+                    self.audio.stop();
                 }
 
                 Response::new_ok()
@@ -199,7 +207,7 @@ impl Player {
                 let RemoveArgs(queue_ids) = args;
                 for queue_id in queue_ids {
                     if self.queue.remove(queue_id) {
-                        let _ = self.audio.stop();
+                        self.audio.stop();
                     }
                 }
 
@@ -221,21 +229,21 @@ impl Player {
 
         match req {
             StatusRequestKind::Current => match self.queue.current() {
-                Some(entry) => Response::new_ok().with_item("current".into(), &entry),
-                None => Response::new_err("no song is playing right now".into()),
+                Some(entry) => Response::new_ok().with_item("current", &entry),
+                None => Response::new_err("no song is playing right now"),
             },
             StatusRequestKind::Elapsed => Response::new_ok()
-                .with_item("elapsed".into(), &self.audio.elapsed())
-                .with_item("out_of".into(), &self.audio.duration()),
+                .with_item("elapsed", &self.audio.elapsed())
+                .with_item("duration", &self.audio.duration()),
             StatusRequestKind::Queue => {
-                Response::new_ok().with_item("queue".into(), &self.queue.as_inner())
+                Response::new_ok().with_item("queue", &self.queue.as_inner())
             }
             StatusRequestKind::State => {
                 // TODO: also return stuff like gapless/random/single from here
-                Response::new_ok().with_item("state".into(), &self.audio.state())
+                Response::new_ok().with_item("state", &self.audio.state())
             }
             StatusRequestKind::Volume => {
-                Response::new_ok().with_item("volume".into(), &self.audio.volume())
+                Response::new_ok().with_item("volume", &self.audio.volume())
             }
         }
     }
@@ -282,7 +290,7 @@ impl Player {
                         self.move_next_until_playable();
                         if self.queue.current().is_none() {
                             self.queue.reset_pos();
-                            let _ = self.audio.stop();
+                            self.audio.stop();
                         }
                     }
                 },

@@ -21,8 +21,14 @@ struct RegexFilter {
 
 struct NullFilter; // matches everything
 
-// TODO: FuzzyFilter based on edit distance
-// TODO: ignore caps by default
+// TODO: rewrite filters
+// to be parsed from JSON objects like
+// {
+//      "tag": "album",
+//      "comparator": {"kind": "levenshtein", "dist": 4},
+//      "pattern": "miLL3nium",
+//      "ignore_case": true",
+// }
 
 #[derive(Debug)]
 pub enum FilterExprOperator {

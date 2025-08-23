@@ -181,14 +181,6 @@ impl Queue {
         self.next_id = 0;
     }
 
-    pub fn start_sequential(&mut self) {
-        self.mode = QueueMode::Sequential;
-    }
-
-    pub fn start_single(&mut self) {
-        self.mode = QueueMode::Single;
-    }
-
     pub fn start_random(&mut self) {
         let not_played_ids: Vec<_> = self
             .list
@@ -203,6 +195,14 @@ impl Queue {
             .map(|entry| entry.queue_id)
             .collect();
         self.mode = QueueMode::Random(Random::new(not_played_ids));
+    }
+
+    pub fn start_sequential(&mut self) {
+        self.mode = QueueMode::Sequential;
+    }
+
+    pub fn start_single(&mut self) {
+        self.mode = QueueMode::Single;
     }
 }
 
@@ -266,29 +266,29 @@ mod test {
         assert_eq!(queue.current(), Some((1, 1001).into()));
     }
 
-    // #[test]
-    // fn random() {
-    //     let mut queue = Queue::new();
-    //     let n = 100;
-    //     for i in 1000..(1000 + n) {
-    //         queue.add(i, None);
-    //     }
-    //
-    //     let mut seen = HashSet::new();
-    //     queue.move_next();
-    //     let cur_on_toggle = queue.current();
-    //     seen.insert(cur_on_toggle.unwrap().queue_id);
-    //     queue.toggle_random();
-    //     for i in 0..(n - 1) {
-    //         let cur = queue.current();
-    //         if i == 0 {
-    //             // check that toggling random doesn't "move" the current song
-    //             assert_eq!(cur, cur_on_toggle);
-    //         } else {
-    //             assert!(cur.is_some() && !seen.contains(&cur.unwrap().queue_id));
-    //         }
-    //         seen.insert(cur.unwrap().queue_id);
-    //         queue.move_next();
-    //     }
-    // }
+    #[test]
+    fn random() {
+        let mut queue = Queue::new();
+        let n = 100;
+        for i in 1000..(1000 + n) {
+            queue.add(i, None);
+        }
+
+        let mut seen = HashSet::new();
+        queue.move_next();
+        let cur_on_toggle = queue.current();
+        seen.insert(cur_on_toggle.unwrap().queue_id);
+        queue.start_random();
+        for i in 0..(n - 1) {
+            let cur = queue.current();
+            if i == 0 {
+                // check that toggling random doesn't "move" the current song
+                assert_eq!(cur, cur_on_toggle);
+            } else {
+                assert!(cur.is_some() && !seen.contains(&cur.unwrap().queue_id));
+            }
+            seen.insert(cur.unwrap().queue_id);
+            queue.move_next();
+        }
+    }
 }

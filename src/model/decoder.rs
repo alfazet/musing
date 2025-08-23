@@ -195,6 +195,7 @@ impl Decoder {
                             let duration = decoded.capacity() as u64;
                             for (proxy, resampler) in self.device_proxies.iter_mut() {
                                 if resampler.is_none() && proxy.sample_rate != spec.rate {
+                                    // TODO: option to change playback speed
                                     *resampler =
                                         Some(Resampler::new(*spec, proxy.sample_rate, duration));
                                 }

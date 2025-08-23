@@ -12,6 +12,7 @@ pub enum VolumeRequest {
     Set(u8),
 }
 
+// TODO: parse requests from JSON
 pub struct MetadataArgs(pub Vec<u32>, pub Vec<TagKey>);
 pub struct SelectArgs(pub FilterExpr, pub Vec<Comparator>);
 pub struct UniqueArgs(pub TagKey, pub Vec<TagKey>, pub FilterExpr);

@@ -52,6 +52,8 @@ impl Comparator {
                     _ => Ordering::Equal,
                 }
             }
+            // we can't just compare strings of type X/Y lexicographically
+            // because (e.g.) "10/12" < "2/12"
             TagKeyKind::OutOf => {
                 let lhs = lhs.split('/').next().and_then(|n| n.parse::<i32>().ok());
                 let rhs = rhs.split('/').next().and_then(|n| n.parse::<i32>().ok());

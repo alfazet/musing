@@ -17,7 +17,7 @@ struct ResponseItem {
 
 pub struct Response {
     kind: ResponseKind,
-    items: Option<Vec<ResponseItem>>,
+    items: Vec<ResponseItem>,
 }
 
 impl Display for ResponseKind {
@@ -50,30 +50,26 @@ impl Response {
     pub fn new_ok() -> Self {
         Self {
             kind: ResponseKind::Ok,
-            items: Some(Vec::new()),
+            items: Vec::new(),
         }
     }
 
-    pub fn new_err(reason: String) -> Self {
+    pub fn new_err(reason: impl Into<String>) -> Self {
         Self {
-            kind: ResponseKind::Err(reason),
-            items: None,
+            kind: ResponseKind::Err(reason.into()),
+            items: Vec::new(),
         }
     }
 
-    fn append_item(&mut self, item: ResponseItem) {
-        if let Some(ref mut items) = self.items {
-            items.push(item);
-        }
-    }
-
-    pub fn with_item(mut self, key: String, value: &dyn ErasedSerialize) -> Self {
+    pub fn with_item(mut self, key: impl Into<String>, value: &dyn ErasedSerialize) -> Self {
         let value = match serde_json::to_value(value) {
             Ok(value) => value,
             Err(_) => return self,
         };
-        let item = ResponseItem { key, value };
-        self.append_item(item);
+        self.items.push(ResponseItem {
+            key: key.into(),
+            value,
+        });
 
         self
     }
@@ -84,8 +80,8 @@ impl Response {
         if let ResponseKind::Err(e) = self.kind {
             json_map.insert("reason".into(), e.to_string().into());
         }
-        if let Some(items) = self.items {
-            json_map.extend(items.into_iter().map(|item| item.into()));
+        if !self.items.is_empty() {
+            json_map.extend(self.items.into_iter().map(|item| item.into()));
         }
 
         Ok(serde_json::to_string(&json_map)?)

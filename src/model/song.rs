@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use std::{
     collections::HashMap,
     fs::File,
@@ -7,15 +7,12 @@ use std::{
 use symphonia::core::{
     formats::{FormatOptions, FormatReader},
     io::MediaSourceStream,
-    meta::{MetadataOptions, MetadataRevision},
+    meta::{MetadataOptions, MetadataRevision, Visual},
     probe::{Hint, ProbeResult},
 };
 
 use crate::model::tag_key::TagKey;
 
-// TODO: see if a HashMap<TagKey, Vec<u8>> is possible
-// if it is, then we can keep the cover_art in the
-// same hashmap for convenience
 #[derive(Default)]
 pub struct Metadata {
     data: HashMap<TagKey, String>,
@@ -82,6 +79,13 @@ impl TryFrom<&Path> for Song {
         };
 
         Ok(song)
+    }
+}
+
+impl Song {
+    // TODO: base64 encode
+    pub fn get_cover_art(&self) -> Option<Vec<u8>> {
+        None
     }
 }
 
