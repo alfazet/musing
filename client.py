@@ -7,11 +7,10 @@ host = socket.gethostname()
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 s.connect(("localhost", PORT))
+response_len = int.from_bytes(s.recv(4), "big")
+response = s.recv(response_len)
+print(json.loads(response))
 while True:
-    response_len = int.from_bytes(s.recv(4), "big")
-    response = s.recv(response_len)
-    print(json.loads(response))
-
     msg = ""
     kind = input("kind: ").strip()
     if kind == "metadata":
@@ -54,6 +53,43 @@ while True:
                 "group_by": group_by,
             }
         )
+    elif kind == "add":
+        ids = list(map(int, input("ids: ").strip().split(",")))
+        pos = int(input("pos: ").strip())
+        request = {"kind": "add", "ids": ids}
+        if pos >= 0:
+            request["pos"] = pos
+        msg = json.dumps(request)
+    elif kind == "play":
+        id = int(input("id: ").strip())
+        msg = json.dumps({"kind": "play", "id": id})
+    elif kind == "setvol":
+        volume = int(input("volume: ").strip())
+        msg = json.dumps({"kind": "setvol", "volume": volume})
+    elif kind == "changevol":
+        delta = int(input("delta: ").strip())
+        msg = json.dumps({"kind": "changevol", "delta": delta})
+    elif kind in (
+        "previous",
+        "next",
+        "pause",
+        "resume",
+        "stop",
+        "toggle",
+        "gapless",
+        "clear",
+        "random",
+        "sequential",
+        "single",
+        "current",
+        "elapsed",
+        "queue",
+        "state",
+        "reset",
+        "update",
+        "volume",
+    ):
+        msg = json.dumps({"kind": kind})
     else:
         print("invalid request")
         continue
@@ -62,3 +98,6 @@ while True:
     n = len(msg_bytes)
     s.sendall(n.to_bytes(4, "big"))
     s.sendall(msg_bytes)
+    response_len = int.from_bytes(s.recv(4), "big")
+    response = s.recv(response_len)
+    print(json.loads(response))

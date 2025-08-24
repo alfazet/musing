@@ -56,18 +56,15 @@ impl TryFrom<&mut Map<String, Value>> for Box<dyn Filter> {
             .remove("tag")
             .ok_or(anyhow!("key `tag` not found"))?
             .as_str()
-            .ok_or(anyhow!("key `tag` must be a string"))?
+            .ok_or(anyhow!("`tag` must be a string"))?
             .try_into()?;
-        let filter = match kind
-            .as_str()
-            .ok_or(anyhow!("key `kind` must be a string"))?
-        {
+        let filter = match kind.as_str().ok_or(anyhow!("`kind` must be a string"))? {
             "regex" => {
                 let regex = Regex::new(
                     map.remove("regex")
                         .ok_or(anyhow!("key `regex` not found"))?
                         .as_str()
-                        .ok_or(anyhow!("key `regex` must be a string"))?,
+                        .ok_or(anyhow!("`regex` must be a string"))?,
                 )?;
 
                 Box::new(RegexFilter { tag, regex })

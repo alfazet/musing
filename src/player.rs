@@ -115,7 +115,7 @@ impl Player {
     }
 
     fn playback_request(&mut self, req: request::PlaybackRequestKind) -> Response {
-        use request::{PlaybackRequestKind, SeekArgs, VolumeArgs, VolumeRequest};
+        use request::{ChangeVolumeArgs, PlaybackRequestKind, SeekArgs, SetVolumeArgs};
 
         match req {
             PlaybackRequestKind::Gapless => {
@@ -137,12 +137,15 @@ impl Player {
                 Response::new_ok()
             }
             PlaybackRequestKind::Toggle => self.audio.toggle().into(),
-            PlaybackRequestKind::Volume(args) => {
-                let VolumeArgs(volume_request) = args;
-                match volume_request {
-                    VolumeRequest::Change(x) => self.audio.change_volume(x),
-                    VolumeRequest::Set(x) => self.audio.set_volume(x),
-                }
+            PlaybackRequestKind::ChangeVolume(args) => {
+                let ChangeVolumeArgs(volume) = args;
+                self.audio.change_volume(volume);
+
+                Response::new_ok()
+            }
+            PlaybackRequestKind::SetVolume(args) => {
+                let SetVolumeArgs(volume) = args;
+                self.audio.set_volume(volume);
 
                 Response::new_ok()
             }

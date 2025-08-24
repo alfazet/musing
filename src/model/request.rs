@@ -9,12 +9,6 @@ use crate::model::{
     tag_key::TagKey,
 };
 
-#[derive(Debug)]
-pub enum VolumeRequest {
-    Change(i8),
-    Set(u8),
-}
-
 pub struct MetadataArgs(pub Vec<u32>, pub Vec<TagKey>);
 pub struct SelectArgs(pub FilterExpr, pub Vec<Comparator>);
 pub struct UniqueArgs(pub TagKey, pub FilterExpr, pub Vec<TagKey>);
@@ -35,15 +29,17 @@ pub enum DeviceRequestKind {
 }
 
 pub struct SeekArgs(pub i64); // in seconds
-pub struct VolumeArgs(pub VolumeRequest);
+pub struct SetVolumeArgs(pub u8);
+pub struct ChangeVolumeArgs(pub i8);
 pub enum PlaybackRequestKind {
+    ChangeVolume(ChangeVolumeArgs),
     Gapless,
     Pause,
     Resume,
     Seek(SeekArgs),
+    SetVolume(SetVolumeArgs),
     Stop,
     Toggle,
-    Volume(VolumeArgs),
 }
 
 pub struct AddArgs(pub Vec<u32>, pub Option<usize>); // db ids
@@ -103,25 +99,23 @@ impl TryFrom<&mut Map<String, Value>> for SelectArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
-        let filters: Vec<Box<dyn Filter>> = serde_json::from_value::<Vec<Value>>(
-            args.remove("filters").unwrap_or_default()
-        )?
-        .into_iter()
-        .map(|mut v| match v.as_object_mut() {
-            Some(v) => v.try_into(),
-            None => Err(anyhow!("filter must be a JSON map")),
-        })
-        .collect::<Result<_>>()?;
+        let filters: Vec<Box<dyn Filter>> =
+            serde_json::from_value::<Vec<Value>>(args.remove("filters").unwrap_or_default())?
+                .into_iter()
+                .map(|mut v| match v.as_object_mut() {
+                    Some(v) => v.try_into(),
+                    None => Err(anyhow!("`filters` must be an array of JSON maps")),
+                })
+                .collect::<Result<_>>()?;
 
-        let comparators: Vec<Comparator> = serde_json::from_value::<Vec<Value>>(
-            args.remove("comparators").unwrap_or_default()
-        )?
-        .into_iter()
-        .map(|mut v| match v.as_object_mut() {
-            Some(v) => v.try_into(),
-            None => Err(anyhow!("comparator must be a JSON map")),
-        })
-        .collect::<Result<_>>()?;
+        let comparators: Vec<Comparator> =
+            serde_json::from_value::<Vec<Value>>(args.remove("comparators").unwrap_or_default())?
+                .into_iter()
+                .map(|mut v| match v.as_object_mut() {
+                    Some(v) => v.try_into(),
+                    None => Err(anyhow!("`comparators` must be an array of JSON maps")),
+                })
+                .collect::<Result<_>>()?;
 
         Ok(Self(FilterExpr(filters), comparators))
     }
@@ -137,24 +131,90 @@ impl TryFrom<&mut Map<String, Value>> for UniqueArgs {
         .as_str()
         .try_into()?;
 
-        let filters: Vec<Box<dyn Filter>> = serde_json::from_value::<Vec<Value>>(
-            args.remove("filters").unwrap_or_default()
-        )?
-        .into_iter()
-        .map(|mut v| match v.as_object_mut() {
-            Some(v) => v.try_into(),
-            None => Err(anyhow!("filter must be a JSON map")),
-        })
-        .collect::<Result<_>>()?;
+        let filters: Vec<Box<dyn Filter>> =
+            serde_json::from_value::<Vec<Value>>(args.remove("filters").unwrap_or_default())?
+                .into_iter()
+                .map(|mut v| match v.as_object_mut() {
+                    Some(v) => v.try_into(),
+                    // TODO: get rid of these error messages (return the errors from the functions
+                    // that can error out)
+                    None => Err(anyhow!("`filters` must be an array of JSON maps")),
+                })
+                .collect::<Result<_>>()?;
 
-        let group_by: Vec<TagKey> = serde_json::from_value::<Vec<String>>(
-            args.remove("group_by").unwrap_or_default()
-        )?
-        .into_iter()
-        .map(|s| TagKey::try_from(s.as_str()))
-        .collect::<Result<_>>()?;
+        let group_by: Vec<TagKey> =
+            serde_json::from_value::<Vec<String>>(args.remove("group_by").unwrap_or_default())?
+                .into_iter()
+                .map(|s| TagKey::try_from(s.as_str()))
+                .collect::<Result<_>>()?;
 
         Ok(Self(tag, FilterExpr(filters), group_by))
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for SeekArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let seconds: i64 = serde_json::from_value(
+            args.remove("seconds")
+                .ok_or(anyhow!("key `seconds` not found"))?,
+        )?;
+
+        Ok(Self(seconds))
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for ChangeVolumeArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let delta: i8 = serde_json::from_value(
+            args.remove("delta")
+                .ok_or(anyhow!("key `delta` not found"))?,
+        )?;
+
+        Ok(Self(delta))
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for SetVolumeArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let volume: u8 = serde_json::from_value(
+            args.remove("volume")
+                .ok_or(anyhow!("key `volume` not found"))?,
+        )?;
+
+        Ok(Self(volume))
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for AddArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let ids: Vec<u32> =
+            serde_json::from_value(args.remove("ids").ok_or(anyhow!("key `ids` not found"))?)?;
+        // TODO: rewrite this
+        let pos: Option<usize> = match args.remove("pos") {
+            Some(pos) => serde_json::from_value(pos)?,
+            None => None,
+        };
+
+        Ok(Self(ids, pos))
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for PlayArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let id: u32 =
+            serde_json::from_value(args.remove("id").ok_or(anyhow!("key `ids` not found"))?)?;
+
+        Ok(Self(id))
     }
 }
 
@@ -171,12 +231,10 @@ impl TryFrom<&str> for RequestKind {
         let mut temp = serde_json::from_str::<Value>(s)?;
         let map = temp
             .as_object_mut()
-            .ok_or(anyhow!("request must be a JSON map"))?;
-        let kind = map.remove("kind").ok_or(anyhow!("key `kind` not found"))?;
-        let kind = match kind
-            .as_str()
-            .ok_or(anyhow!("key `kind` must be a string"))?
-        {
+            .ok_or(anyhow!("the request must be a JSON map"))?;
+        let kind: String =
+            serde_json::from_value(map.remove("kind").ok_or(anyhow!("key `kind` not found"))?)?;
+        let kind = match kind.as_str() {
             "metadata" => RequestKind::Db(Db::Metadata(map.try_into()?)),
             "reset" => RequestKind::Db(Db::Reset),
             "select" => RequestKind::Db(Db::Select(map.try_into()?)),
@@ -185,33 +243,31 @@ impl TryFrom<&str> for RequestKind {
 
             // "disable" => RequestKind::Device(Device::Disable(map.try_into()?)),
             // "enable" => RequestKind::Device(Device::Enable(map.try_into()?)),
-            // "listdevices" => RequestKind::Device(Device::ListDevices),
-
-            // "gapless" => RequestKind::Playback(Playback::Gapless),
-            // "pause" => RequestKind::Playback(Playback::Pause),
-            // "resume" => RequestKind::Playback(Playback::Resume),
-            // "seek" => RequestKind::Playback(Playback::Seek()),
-            // "stop" => RequestKind::Playback(Playback::Stop),
-            // "toggle" => RequestKind::Playback(Playback::Toggle),
-            //
-            // "add" => RequestKind::Queue(Queue::Add()),
-            // "clear" => RequestKind::Queue(Queue::Clear),
-            // "next" => RequestKind::Queue(Queue::Next),
-            // "play" => RequestKind::Queue(Queue::Play()),
-            // "previous" => RequestKind::Queue(Queue::Previous),
-            // "random" => RequestKind::Queue(Queue::Random),
+            "listdev" => RequestKind::Device(Device::ListDevices),
+            "gapless" => RequestKind::Playback(Playback::Gapless),
+            "pause" => RequestKind::Playback(Playback::Pause),
+            "resume" => RequestKind::Playback(Playback::Resume),
+            "seek" => RequestKind::Playback(Playback::Seek(map.try_into()?)),
+            "stop" => RequestKind::Playback(Playback::Stop),
+            "toggle" => RequestKind::Playback(Playback::Toggle),
+            "setvol" => RequestKind::Playback(Playback::SetVolume(map.try_into()?)),
+            "changevol" => RequestKind::Playback(Playback::ChangeVolume(map.try_into()?)),
+            "add" => RequestKind::Queue(Queue::Add(map.try_into()?)),
+            "clear" => RequestKind::Queue(Queue::Clear),
+            "next" => RequestKind::Queue(Queue::Next),
+            "play" => RequestKind::Queue(Queue::Play(map.try_into()?)),
+            "previous" => RequestKind::Queue(Queue::Previous),
+            "random" => RequestKind::Queue(Queue::Random),
             // "remove" => RequestKind::Queue(Queue::Remove()),
-            // "sequential" => RequestKind::Queue(Queue::Sequential),
-            // "single" => RequestKind::Queue(Queue::Single),
-            //
-            // "current" => RequestKind::Status(Status::Current),
-            // "elapsed" => RequestKind::Status(Status::Elapsed),
-            // "queue" => RequestKind::Status(Status::Queue),
-            // "state" => RequestKind::Status(Status::State),
-            // "volume" => match tokens.len() {
-            //     1 => RequestKind::Status(Status::Volume),
-            //     _ => RequestKind::Playback(Playback::Volume()),
-            // },
+            "sequential" => RequestKind::Queue(Queue::Sequential),
+            "single" => RequestKind::Queue(Queue::Single),
+
+            "current" => RequestKind::Status(Status::Current),
+            "elapsed" => RequestKind::Status(Status::Elapsed),
+            "queue" => RequestKind::Status(Status::Queue),
+            "state" => RequestKind::Status(Status::State),
+            "volume" => RequestKind::Status(Status::Volume),
+
             other => bail!("invalid value of key `kind`: `{}`", other),
         };
 

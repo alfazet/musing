@@ -30,7 +30,7 @@ impl TryFrom<&str> for ComparisonOrder {
         match s {
             "ascending" => Ok(ComparisonOrder::Ascending),
             "descending" => Ok(ComparisonOrder::Descending),
-            _ => bail!("comparison order must be `ascending` or `descending`"),
+            _ => bail!("`order` must be 'ascending' or 'descending'"),
         }
     }
 }
@@ -43,12 +43,12 @@ impl TryFrom<&mut Map<String, Value>> for Comparator {
             .remove("tag")
             .ok_or(anyhow!("key `tag` not found"))?
             .as_str()
-            .ok_or(anyhow!("key `tag` must be a string"))?
+            .ok_or(anyhow!("`tag` must be a string"))?
             .try_into()?;
         let order: ComparisonOrder = match map.remove("order") {
             Some(v) => v
                 .as_str()
-                .ok_or(anyhow!("key `order` must be a string"))?
+                .ok_or(anyhow!("`order` must be a string"))?
                 .try_into()?,
             None => ComparisonOrder::Ascending,
         };
