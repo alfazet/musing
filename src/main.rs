@@ -14,7 +14,6 @@ mod player;
 mod server;
 
 mod model;
-mod parsers;
 
 fn setup_logging(cli_opts: &CliOptions) {
     if cli_opts.log_stderr {

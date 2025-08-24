@@ -135,7 +135,7 @@ impl Database {
     }
 
     // get unique values of `tag` among songs matching `filter_expr`, grouped by tags in `group_by`
-    pub fn unique(&self, UniqueArgs(tag, group_by, filter_expr): UniqueArgs) -> Response {
+    pub fn unique(&self, UniqueArgs(tag, filter_expr, group_by): UniqueArgs) -> Response {
         let mut groups = HashMap::new();
         let filtered = self
             .data_rows

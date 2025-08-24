@@ -1,9 +1,12 @@
 use anyhow::{Result, anyhow, bail};
+use serde_json::{Map, Value};
 use tokio::sync::oneshot;
 
-use crate::{
-    model::{comparator::Comparator, filter::FilterExpr, response::Response, tag_key::TagKey},
-    parsers::request,
+use crate::model::{
+    comparator::Comparator,
+    filter::{Filter, FilterExpr},
+    response::Response,
+    tag_key::TagKey,
 };
 
 #[derive(Debug)]
@@ -12,10 +15,9 @@ pub enum VolumeRequest {
     Set(u8),
 }
 
-// TODO: parse requests from JSON
 pub struct MetadataArgs(pub Vec<u32>, pub Vec<TagKey>);
 pub struct SelectArgs(pub FilterExpr, pub Vec<Comparator>);
-pub struct UniqueArgs(pub TagKey, pub Vec<TagKey>, pub FilterExpr);
+pub struct UniqueArgs(pub TagKey, pub FilterExpr, pub Vec<TagKey>);
 pub enum DbRequestKind {
     Metadata(MetadataArgs),
     Reset,
@@ -80,205 +82,79 @@ pub struct Request {
     pub tx_response: oneshot::Sender<Response>,
 }
 
-impl TryFrom<&[String]> for MetadataArgs {
+impl TryFrom<&mut Map<String, Value>> for MetadataArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &[String]) -> Result<Self> {
-        if args.len() != 2 {
-            bail!("invalid arguments to `metadata`");
-        }
-        let ids = args[0]
-            .trim_end_matches(',')
-            .split(',')
-            .map(|s| s.parse::<u32>().map_err(|e| e.into()))
-            .collect::<Result<Vec<u32>>>()?;
-        let tags = args[1]
-            .trim_end_matches(',')
-            .split(',')
-            .map(TagKey::try_from)
-            .collect::<Result<Vec<TagKey>>>()?;
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let ids: Vec<u32> =
+            serde_json::from_value(args.remove("ids").ok_or(anyhow!("key `ids` not found"))?)?;
+        let tags: Vec<TagKey> = serde_json::from_value::<Vec<String>>(
+            args.remove("tags").ok_or(anyhow!("key `tags` not found"))?,
+        )?
+        .into_iter()
+        .map(|s| TagKey::try_from(s.as_str()))
+        .collect::<Result<_>>()?;
 
         Ok(Self(ids, tags))
     }
 }
 
-impl TryFrom<&[String]> for SelectArgs {
+impl TryFrom<&mut Map<String, Value>> for SelectArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &[String]) -> Result<Self> {
-        let filter_expr = args.first().map_or_else(
-            || Ok(FilterExpr::default()),
-            |s| FilterExpr::try_from(s.as_str()),
-        )?;
-        let sort_by = args
-            .get(1)
-            .map(|v| {
-                v.trim_end_matches(',')
-                    .split(',')
-                    .map(Comparator::try_from)
-                    .collect::<Result<Vec<Comparator>>>()
-            })
-            .unwrap_or(Ok(Vec::new()))?;
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let filters: Vec<Box<dyn Filter>> = serde_json::from_value::<Vec<Value>>(
+            args.remove("filters").unwrap_or_default()
+        )?
+        .into_iter()
+        .map(|mut v| match v.as_object_mut() {
+            Some(v) => v.try_into(),
+            None => Err(anyhow!("filter must be a JSON map")),
+        })
+        .collect::<Result<_>>()?;
 
-        Ok(Self(filter_expr, sort_by))
+        let comparators: Vec<Comparator> = serde_json::from_value::<Vec<Value>>(
+            args.remove("comparators").unwrap_or_default()
+        )?
+        .into_iter()
+        .map(|mut v| match v.as_object_mut() {
+            Some(v) => v.try_into(),
+            None => Err(anyhow!("comparator must be a JSON map")),
+        })
+        .collect::<Result<_>>()?;
+
+        Ok(Self(FilterExpr(filters), comparators))
     }
 }
 
-impl TryFrom<&[String]> for UniqueArgs {
+impl TryFrom<&mut Map<String, Value>> for UniqueArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &[String]) -> Result<Self> {
-        if args.is_empty() {
-            bail!("invalid arguments to `unique`");
-        }
-        let tag = TagKey::try_from(args[0].as_str())?;
-        let group_by = match args.get(1).map(|s| s.as_str()) {
-            Some("groupby") => args
-                .get(2)
-                .ok_or(anyhow!("no tags provided to `groupby`"))?
-                .trim_end_matches(',')
-                .split(',')
-                .map(TagKey::try_from)
-                .collect::<Result<Vec<TagKey>>>()?,
-            _ => Vec::new(),
-        };
-        let filter_expr = args
-            .get(1 + if group_by.is_empty() { 0 } else { 2 })
-            .map_or_else(
-                || Ok(FilterExpr::default()),
-                |s| FilterExpr::try_from(s.as_str()),
-            )?;
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let tag: TagKey = serde_json::from_value::<String>(
+            args.remove("tag").ok_or(anyhow!("key `tag` not found"))?,
+        )?
+        .as_str()
+        .try_into()?;
 
-        Ok(Self(tag, group_by, filter_expr))
-    }
-}
+        let filters: Vec<Box<dyn Filter>> = serde_json::from_value::<Vec<Value>>(
+            args.remove("filters").unwrap_or_default()
+        )?
+        .into_iter()
+        .map(|mut v| match v.as_object_mut() {
+            Some(v) => v.try_into(),
+            None => Err(anyhow!("filter must be a JSON map")),
+        })
+        .collect::<Result<_>>()?;
 
-impl TryFrom<&[String]> for DisableArgs {
-    type Error = anyhow::Error;
+        let group_by: Vec<TagKey> = serde_json::from_value::<Vec<String>>(
+            args.remove("group_by").unwrap_or_default()
+        )?
+        .into_iter()
+        .map(|s| TagKey::try_from(s.as_str()))
+        .collect::<Result<_>>()?;
 
-    fn try_from(args: &[String]) -> Result<Self> {
-        if args.is_empty() {
-            bail!("invalid arguments to `disable`");
-        }
-
-        Ok(Self(args[0].clone()))
-    }
-}
-
-impl TryFrom<&[String]> for EnableArgs {
-    type Error = anyhow::Error;
-
-    fn try_from(args: &[String]) -> Result<Self> {
-        if args.is_empty() {
-            bail!("invalid arguments to `enable`");
-        }
-
-        Ok(Self(args[0].clone()))
-    }
-}
-
-impl TryFrom<&[String]> for SeekArgs {
-    type Error = anyhow::Error;
-
-    fn try_from(args: &[String]) -> Result<Self> {
-        if args.is_empty() {
-            bail!("invalid arguments to `seek`");
-        }
-        let secs = args[0].parse::<i64>()?;
-
-        Ok(Self(secs))
-    }
-}
-
-impl TryFrom<&[String]> for VolumeArgs {
-    type Error = anyhow::Error;
-
-    fn try_from(args: &[String]) -> Result<Self> {
-        // args are non-empty here
-        let chars: Vec<_> = args[0].chars().collect();
-        let volume = match chars.first().unwrap() {
-            '+' => {
-                let x = args[0].trim_start_matches('+').parse::<i8>()?;
-                VolumeRequest::Change(x)
-            }
-            '-' => {
-                let x = args[0].parse::<i8>()?;
-                VolumeRequest::Change(x)
-            }
-            _ => {
-                let x = args[0].parse::<u8>()?;
-                VolumeRequest::Set(x)
-            }
-        };
-
-        Ok(Self(volume))
-    }
-}
-
-impl TryFrom<&[String]> for AddArgs {
-    type Error = anyhow::Error;
-
-    fn try_from(args: &[String]) -> Result<Self> {
-        if args.is_empty() {
-            bail!("invalid arguments to `add`");
-        }
-        let ids = args[0]
-            .trim_end_matches(',')
-            .split(',')
-            .map(|s| s.parse::<u32>().map_err(|e| e.into()))
-            .collect::<Result<Vec<u32>>>()?;
-        let pos = args.get(1).and_then(|x| x.parse::<usize>().ok());
-
-        Ok(Self(ids, pos))
-    }
-}
-
-/*
-impl TryFrom<&[String]> for ModeArgs {
-    type Error = anyhow::Error;
-
-    fn try_from(args: &[String]) -> Result<Self> {
-        if args.is_empty() {
-            bail!("invalid arguments to `mode`");
-        }
-        let mode = match args[0].as_str() {
-            "sequential" => QueueMode::Sequential,
-            "random" => QueueMode::Random,
-            _ => bail!("valid modes: `sequential`, `random`"),
-        };
-
-        Ok(Self(mode))
-    }
-}
-*/
-
-impl TryFrom<&[String]> for PlayArgs {
-    type Error = anyhow::Error;
-
-    fn try_from(args: &[String]) -> Result<Self> {
-        if args.is_empty() {
-            bail!("invalid arguments to `play`");
-        }
-        let id = args[0].parse::<u32>()?;
-
-        Ok(Self(id))
-    }
-}
-
-impl TryFrom<&[String]> for RemoveArgs {
-    type Error = anyhow::Error;
-
-    fn try_from(args: &[String]) -> Result<Self> {
-        if args.is_empty() {
-            bail!("invalid arguments to `remove`");
-        }
-        let ids = args[0]
-            .trim_end_matches(',')
-            .split(',')
-            .map(|s| s.parse::<u32>().map_err(|e| e.into()))
-            .collect::<Result<Vec<u32>>>()?;
-
-        Ok(Self(ids))
+        Ok(Self(tag, FilterExpr(filters), group_by))
     }
 }
 
@@ -292,48 +168,51 @@ impl TryFrom<&str> for RequestKind {
         use QueueRequestKind as Queue;
         use StatusRequestKind as Status;
 
-        let tokens = request::tokenize(s)?;
-        let kind = match tokens.first().map(|s| s.as_str()) {
-            Some(request) => match request {
-                "metadata" => RequestKind::Db(Db::Metadata(tokens[1..].try_into()?)),
-                "reset" => RequestKind::Db(Db::Reset),
-                "select" => RequestKind::Db(Db::Select(tokens[1..].try_into()?)),
-                "unique" => RequestKind::Db(Db::Unique(tokens[1..].try_into()?)),
-                "update" => RequestKind::Db(Db::Update),
+        let mut temp = serde_json::from_str::<Value>(s)?;
+        let map = temp
+            .as_object_mut()
+            .ok_or(anyhow!("request must be a JSON map"))?;
+        let kind = map.remove("kind").ok_or(anyhow!("key `kind` not found"))?;
+        let kind = match kind
+            .as_str()
+            .ok_or(anyhow!("key `kind` must be a string"))?
+        {
+            "metadata" => RequestKind::Db(Db::Metadata(map.try_into()?)),
+            "reset" => RequestKind::Db(Db::Reset),
+            "select" => RequestKind::Db(Db::Select(map.try_into()?)),
+            "unique" => RequestKind::Db(Db::Unique(map.try_into()?)),
+            "update" => RequestKind::Db(Db::Update),
 
-                "disable" => RequestKind::Device(Device::Disable(tokens[1..].try_into()?)),
-                "enable" => RequestKind::Device(Device::Enable(tokens[1..].try_into()?)),
-                "listdevices" => RequestKind::Device(Device::ListDevices),
+            // "disable" => RequestKind::Device(Device::Disable(map.try_into()?)),
+            // "enable" => RequestKind::Device(Device::Enable(map.try_into()?)),
+            // "listdevices" => RequestKind::Device(Device::ListDevices),
 
-                "gapless" => RequestKind::Playback(Playback::Gapless),
-                "pause" => RequestKind::Playback(Playback::Pause),
-                "resume" => RequestKind::Playback(Playback::Resume),
-                "seek" => RequestKind::Playback(Playback::Seek(tokens[1..].try_into()?)),
-                "stop" => RequestKind::Playback(Playback::Stop),
-                "toggle" => RequestKind::Playback(Playback::Toggle),
-
-                "add" => RequestKind::Queue(Queue::Add(tokens[1..].try_into()?)),
-                "clear" => RequestKind::Queue(Queue::Clear),
-                "next" => RequestKind::Queue(Queue::Next),
-                "play" => RequestKind::Queue(Queue::Play(tokens[1..].try_into()?)),
-                "previous" => RequestKind::Queue(Queue::Previous),
-                "random" => RequestKind::Queue(Queue::Random),
-                "remove" => RequestKind::Queue(Queue::Remove(tokens[1..].try_into()?)),
-                "sequential" => RequestKind::Queue(Queue::Sequential),
-                "single" => RequestKind::Queue(Queue::Single),
-
-                "current" => RequestKind::Status(Status::Current),
-                "elapsed" => RequestKind::Status(Status::Elapsed),
-                "queue" => RequestKind::Status(Status::Queue),
-                "state" => RequestKind::Status(Status::State),
-                "volume" => match tokens.len() {
-                    1 => RequestKind::Status(Status::Volume),
-                    _ => RequestKind::Playback(Playback::Volume(tokens[1..].try_into()?)),
-                },
-
-                _ => bail!("invalid request"),
-            },
-            None => bail!("empty request"),
+            // "gapless" => RequestKind::Playback(Playback::Gapless),
+            // "pause" => RequestKind::Playback(Playback::Pause),
+            // "resume" => RequestKind::Playback(Playback::Resume),
+            // "seek" => RequestKind::Playback(Playback::Seek()),
+            // "stop" => RequestKind::Playback(Playback::Stop),
+            // "toggle" => RequestKind::Playback(Playback::Toggle),
+            //
+            // "add" => RequestKind::Queue(Queue::Add()),
+            // "clear" => RequestKind::Queue(Queue::Clear),
+            // "next" => RequestKind::Queue(Queue::Next),
+            // "play" => RequestKind::Queue(Queue::Play()),
+            // "previous" => RequestKind::Queue(Queue::Previous),
+            // "random" => RequestKind::Queue(Queue::Random),
+            // "remove" => RequestKind::Queue(Queue::Remove()),
+            // "sequential" => RequestKind::Queue(Queue::Sequential),
+            // "single" => RequestKind::Queue(Queue::Single),
+            //
+            // "current" => RequestKind::Status(Status::Current),
+            // "elapsed" => RequestKind::Status(Status::Elapsed),
+            // "queue" => RequestKind::Status(Status::Queue),
+            // "state" => RequestKind::Status(Status::State),
+            // "volume" => match tokens.len() {
+            //     1 => RequestKind::Status(Status::Volume),
+            //     _ => RequestKind::Playback(Playback::Volume()),
+            // },
+            other => bail!("invalid value of key `kind`: `{}`", other),
         };
 
         Ok(kind)

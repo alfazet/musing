@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use std::{
     collections::HashMap,
     fs::File,
@@ -7,7 +7,7 @@ use std::{
 use symphonia::core::{
     formats::{FormatOptions, FormatReader},
     io::MediaSourceStream,
-    meta::{MetadataOptions, MetadataRevision, Visual},
+    meta::{MetadataOptions, MetadataRevision},
     probe::{Hint, ProbeResult},
 };
 
@@ -82,12 +82,14 @@ impl TryFrom<&Path> for Song {
     }
 }
 
+/*
 impl Song {
     // TODO: base64 encode
     pub fn get_cover_art(&self) -> Option<Vec<u8>> {
         None
     }
 }
+*/
 
 impl From<&Song> for SongProxy {
     fn from(song: &Song) -> SongProxy {

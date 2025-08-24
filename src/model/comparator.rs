@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow, bail};
+use serde_json::{Map, Value};
 use std::{
     cmp::Ordering,
     fmt::{self, Display, Formatter},
@@ -9,40 +10,56 @@ use crate::model::{
     tag_key::{TagKey, TagKeyKind},
 };
 
+#[derive(Debug, Default)]
+enum ComparisonOrder {
+    #[default]
+    Ascending,
+    Descending,
+}
+
 #[derive(Debug)]
 pub struct Comparator {
-    tag_key: TagKey,
-    inverted: bool,
+    tag: TagKey,
+    order: ComparisonOrder,
 }
 
-impl Display for Comparator {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let operator = if self.inverted {
-            "!".to_string()
-        } else {
-            "".to_string()
-        };
-        write!(f, "{}{}", operator, self.tag_key)
-    }
-}
-
-impl TryFrom<&str> for Comparator {
+impl TryFrom<&str> for ComparisonOrder {
     type Error = anyhow::Error;
 
     fn try_from(s: &str) -> Result<Self> {
-        let (tag_key, inverted) = if let Some(s) = s.strip_prefix('!') {
-            (s.try_into()?, true)
-        } else {
-            (s.try_into()?, false)
+        match s {
+            "ascending" => Ok(ComparisonOrder::Ascending),
+            "descending" => Ok(ComparisonOrder::Descending),
+            _ => bail!("comparison order must be `ascending` or `descending`"),
+        }
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for Comparator {
+    type Error = anyhow::Error;
+
+    fn try_from(map: &mut Map<String, Value>) -> Result<Self> {
+        let tag: TagKey = map
+            .remove("tag")
+            .ok_or(anyhow!("key `tag` not found"))?
+            .as_str()
+            .ok_or(anyhow!("key `tag` must be a string"))?
+            .try_into()?;
+        let order: ComparisonOrder = match map.remove("order") {
+            Some(v) => v
+                .as_str()
+                .ok_or(anyhow!("key `order` must be a string"))?
+                .try_into()?,
+            None => ComparisonOrder::Ascending,
         };
 
-        Ok(Self { tag_key, inverted })
+        Ok(Comparator { tag, order })
     }
 }
 
 impl Comparator {
     fn cmp_values(&self, lhs: &str, rhs: &str) -> Ordering {
-        match self.tag_key.kind {
+        match self.tag.kind {
             TagKeyKind::String => lhs.cmp(rhs),
             TagKeyKind::Integer => {
                 let lhs = lhs.parse::<i32>();
@@ -66,8 +83,8 @@ impl Comparator {
     }
 
     pub fn cmp(&self, lhs: &Metadata, rhs: &Metadata) -> Ordering {
-        let lhs = lhs.get(&self.tag_key);
-        let rhs = rhs.get(&self.tag_key);
+        let lhs = lhs.get(&self.tag);
+        let rhs = rhs.get(&self.tag);
         let ordering = match (lhs, rhs) {
             (Some(lhs), Some(rhs)) => self.cmp_values(lhs, rhs),
             (Some(_), None) => Ordering::Greater,
@@ -75,10 +92,9 @@ impl Comparator {
             (None, None) => Ordering::Equal,
         };
 
-        if self.inverted {
-            ordering.reverse()
-        } else {
-            ordering
+        match self.order {
+            ComparisonOrder::Ascending => ordering,
+            ComparisonOrder::Descending => ordering.reverse(),
         }
     }
 }
