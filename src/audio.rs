@@ -160,21 +160,6 @@ impl Audio {
     }
 
     pub fn list_devices(&self) -> Vec<(String, bool)> {
-        // let devices: Vec<_> = self
-        //     .devices
-        //     .values()
-        //     .map(|d| {
-        //         let mut json_map = Map::new();
-        //         json_map.insert(
-        //             "name".into(),
-        //             d.name().unwrap_or(constants::UNKNOWN_DEVICE.into()).into(),
-        //         );
-        //         json_map.insert("enabled".into(), d.is_enabled().into());
-        //
-        //         json_map
-        //     })
-        //     .collect();
-        // Response::new_ok().with_item("devices", &devices)
         self.devices
             .values()
             .map(|d| {
@@ -276,8 +261,17 @@ impl Audio {
         self.playback.duration
     }
 
-    pub fn state(&self) -> u8 {
-        self.playback.state as u8
+    pub fn gapless(&self) -> bool {
+        self.playback.gapless
+    }
+
+    pub fn state(&self) -> String {
+        match self.playback.state {
+            PlaybackState::Stopped => "stopped",
+            PlaybackState::Playing => "playing",
+            PlaybackState::Paused => "paused",
+        }
+        .into()
     }
 }
 

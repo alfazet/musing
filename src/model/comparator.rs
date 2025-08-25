@@ -1,9 +1,6 @@
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Map, Value};
-use std::{
-    cmp::Ordering,
-    fmt::{self, Display, Formatter},
-};
+use std::cmp::Ordering;
 
 use crate::model::{
     song::Metadata,

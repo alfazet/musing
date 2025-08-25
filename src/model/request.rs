@@ -152,6 +152,32 @@ impl TryFrom<&mut Map<String, Value>> for UniqueArgs {
     }
 }
 
+impl TryFrom<&mut Map<String, Value>> for DisableArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let device: String = serde_json::from_value(
+            args.remove("device")
+                .ok_or(anyhow!("key `device` not found"))?,
+        )?;
+
+        Ok(Self(device))
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for EnableArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let device: String = serde_json::from_value(
+            args.remove("device")
+                .ok_or(anyhow!("key `device` not found"))?,
+        )?;
+
+        Ok(Self(device))
+    }
+}
+
 impl TryFrom<&mut Map<String, Value>> for SeekArgs {
     type Error = anyhow::Error;
 
@@ -197,11 +223,7 @@ impl TryFrom<&mut Map<String, Value>> for AddArgs {
     fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
         let ids: Vec<u32> =
             serde_json::from_value(args.remove("ids").ok_or(anyhow!("key `ids` not found"))?)?;
-        // TODO: rewrite this
-        let pos: Option<usize> = match args.remove("pos") {
-            Some(pos) => serde_json::from_value(pos)?,
-            None => None,
-        };
+        let pos = args.remove("pos").map(serde_json::from_value).transpose()?;
 
         Ok(Self(ids, pos))
     }
@@ -215,6 +237,17 @@ impl TryFrom<&mut Map<String, Value>> for PlayArgs {
             serde_json::from_value(args.remove("id").ok_or(anyhow!("key `ids` not found"))?)?;
 
         Ok(Self(id))
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for RemoveArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let ids: Vec<u32> =
+            serde_json::from_value(args.remove("ids").ok_or(anyhow!("key `ids` not found"))?)?;
+
+        Ok(Self(ids))
     }
 }
 
@@ -241,8 +274,8 @@ impl TryFrom<&str> for RequestKind {
             "unique" => RequestKind::Db(Db::Unique(map.try_into()?)),
             "update" => RequestKind::Db(Db::Update),
 
-            // "disable" => RequestKind::Device(Device::Disable(map.try_into()?)),
-            // "enable" => RequestKind::Device(Device::Enable(map.try_into()?)),
+            "disable" => RequestKind::Device(Device::Disable(map.try_into()?)),
+            "enable" => RequestKind::Device(Device::Enable(map.try_into()?)),
             "listdev" => RequestKind::Device(Device::ListDevices),
             "gapless" => RequestKind::Playback(Playback::Gapless),
             "pause" => RequestKind::Playback(Playback::Pause),
@@ -258,7 +291,7 @@ impl TryFrom<&str> for RequestKind {
             "play" => RequestKind::Queue(Queue::Play(map.try_into()?)),
             "previous" => RequestKind::Queue(Queue::Previous),
             "random" => RequestKind::Queue(Queue::Random),
-            // "remove" => RequestKind::Queue(Queue::Remove()),
+            "remove" => RequestKind::Queue(Queue::Remove(map.try_into()?)),
             "sequential" => RequestKind::Queue(Queue::Sequential),
             "single" => RequestKind::Queue(Queue::Single),
 

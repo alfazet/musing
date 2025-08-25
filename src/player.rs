@@ -102,12 +102,18 @@ impl Player {
                 self.audio.enable_device(&device).into()
             }
             DeviceRequestKind::ListDevices => {
-                let devices = Map::from_iter(
-                    self.audio
-                        .list_devices()
-                        .into_iter()
-                        .map(|(d, enabled)| (d, enabled.into())),
-                );
+                let devices: Vec<_> = self
+                    .audio
+                    .list_devices()
+                    .into_iter()
+                    .map(|(d, enabled)| {
+                        let mut map = Map::new();
+                        map.insert("device".into(), d.into());
+                        map.insert("enabled".into(), enabled.into());
+
+                        map
+                    })
+                    .collect();
 
                 Response::new_ok().with_item("devices", &devices)
             }
@@ -241,10 +247,10 @@ impl Player {
             StatusRequestKind::Queue => {
                 Response::new_ok().with_item("queue", &self.queue.as_inner())
             }
-            StatusRequestKind::State => {
-                // TODO: also return stuff like gapless/random/single from here
-                Response::new_ok().with_item("state", &self.audio.state())
-            }
+            StatusRequestKind::State => Response::new_ok()
+                .with_item("state", &self.audio.state())
+                .with_item("mode", &self.queue.mode())
+                .with_item("gapless", &self.audio.gapless()),
             StatusRequestKind::Volume => {
                 Response::new_ok().with_item("volume", &self.audio.volume())
             }

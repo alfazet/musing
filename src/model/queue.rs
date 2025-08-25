@@ -54,6 +54,15 @@ impl Queue {
         Self::default()
     }
 
+    pub fn mode(&self) -> String {
+        match self.mode {
+            QueueMode::Sequential => "sequential",
+            QueueMode::Single => "single",
+            QueueMode::Random(_) => "random",
+        }
+        .into()
+    }
+
     pub fn current(&self) -> Option<Entry> {
         self.pos.map(|pos| self.list[pos])
     }

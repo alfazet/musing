@@ -225,7 +225,7 @@ mod db_utils {
             false
         };
 
-        // TODO: ignore specified directories (like .gitignore)
+        // TODO: ignore specified directories (similar to a .gitignore)
         if !root_dir.exists() {
             bail!(format!(
                 "directory `{}` doesn't exist",

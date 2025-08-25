@@ -60,6 +60,9 @@ while True:
         if pos >= 0:
             request["pos"] = pos
         msg = json.dumps(request)
+    elif kind == "remove":
+        ids = list(map(int, input("ids: ").strip().split(",")))
+        msg = json.dumps({"kind": "remove", "ids": ids})
     elif kind == "play":
         id = int(input("id: ").strip())
         msg = json.dumps({"kind": "play", "id": id})
@@ -69,6 +72,12 @@ while True:
     elif kind == "changevol":
         delta = int(input("delta: ").strip())
         msg = json.dumps({"kind": "changevol", "delta": delta})
+    elif kind == "seek":
+        delta = int(input("seconds: ").strip())
+        msg = json.dumps({"kind": "seek", "seconds": delta})
+    elif kind in ("disable", "enable"):
+        device = input("device: ").strip()
+        msg = json.dumps({"kind": kind, "device": device})
     elif kind in (
         "previous",
         "next",
@@ -88,6 +97,7 @@ while True:
         "reset",
         "update",
         "volume",
+        "listdev",
     ):
         msg = json.dumps({"kind": kind})
     else:
