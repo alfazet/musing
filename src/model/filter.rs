@@ -41,7 +41,8 @@ impl Filter for RegexFilter {
     }
 }
 
-// TODO:
+// TODO: true if edit_dist <= filter.dist
+// case insensitive
 impl Filter for FuzzyFilter {
     fn matches(&self, _: &Song) -> bool {
         true

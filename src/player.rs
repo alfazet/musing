@@ -122,9 +122,15 @@ impl Player {
     }
 
     async fn playback_request(&mut self, req: request::PlaybackRequestKind) -> Response {
-        use request::{ChangeVolumeArgs, PlaybackRequestKind, SeekArgs, SetVolumeArgs};
+        use request::{ChangeVolumeArgs, PlaybackRequestKind, SeekArgs, SetVolumeArgs, SpeedArgs};
 
         match req {
+            PlaybackRequestKind::ChangeVolume(args) => {
+                let ChangeVolumeArgs(volume) = args;
+                self.audio.change_volume(volume);
+
+                Response::new_ok()
+            }
             PlaybackRequestKind::Gapless => {
                 self.audio.toggle_gapless();
                 Response::new_ok()
@@ -137,6 +143,18 @@ impl Player {
 
                 Response::new_ok()
             }
+            PlaybackRequestKind::SetVolume(args) => {
+                let SetVolumeArgs(volume) = args;
+                self.audio.set_volume(volume);
+
+                Response::new_ok()
+            }
+            PlaybackRequestKind::Speed(args) => {
+                let SpeedArgs(speed) = args;
+                self.audio.set_speed(speed);
+
+                Response::new_ok()
+            }
             PlaybackRequestKind::Stop => {
                 self.queue.reset_pos();
                 self.audio.stop();
@@ -144,18 +162,6 @@ impl Player {
                 Response::new_ok()
             }
             PlaybackRequestKind::Toggle => self.audio.toggle().await.into(),
-            PlaybackRequestKind::ChangeVolume(args) => {
-                let ChangeVolumeArgs(volume) = args;
-                self.audio.change_volume(volume);
-
-                Response::new_ok()
-            }
-            PlaybackRequestKind::SetVolume(args) => {
-                let SetVolumeArgs(volume) = args;
-                self.audio.set_volume(volume);
-
-                Response::new_ok()
-            }
         }
     }
 
@@ -246,6 +252,7 @@ impl Player {
                     .with_item("gapless", &self.audio.gapless())
                     .with_item("mode", &self.queue.mode())
                     .with_item("state", &self.audio.state())
+                    .with_item("speed", &self.audio.speed())
                     .with_item("volume", &self.audio.volume());
                 if let Some(timer) = self.audio.playback_timer().await {
                     response = response

@@ -22,6 +22,8 @@ use crate::model::{
 const BASE_SAMPLE_MIN: BaseSample = -1.0;
 const BASE_SAMPLE_MAX: BaseSample = 1.0;
 const MAX_VOLUME: u8 = 100;
+const MIN_SPEED: u16 = 25; // x0.25
+const MAX_SPEED: u16 = 400; // x4
 
 #[derive(Clone, Copy, Default)]
 pub struct PlaybackTimer {
@@ -51,7 +53,27 @@ impl Default for Volume {
     }
 }
 
-// TODO: seek forwards, backwards and percentage (e.g. 50% = to the middle of the song)
+#[derive(Clone, Copy, PartialEq)]
+pub struct Speed(u16);
+
+impl From<u16> for Speed {
+    fn from(x: u16) -> Self {
+        Self(x.clamp(MIN_SPEED, MAX_SPEED))
+    }
+}
+
+impl From<Speed> for u16 {
+    fn from(s: Speed) -> Self {
+        s.0
+    }
+}
+
+impl Default for Speed {
+    fn default() -> Self {
+        Self(100)
+    }
+}
+
 #[derive(Debug)]
 pub enum Seek {
     Forwards(u64),
@@ -179,6 +201,7 @@ impl Decoder {
         &mut self,
         rx_request: cbeam_chan::Receiver<DecoderRequest>,
         volume: Arc<RwLock<Volume>>,
+        speed: Arc<RwLock<Speed>>,
     ) -> Result<()> {
         fn send_decoded_packet(
             proxies: &mut [(DeviceProxy, Option<Resampler>)],
@@ -215,6 +238,7 @@ impl Decoder {
         self.timer.elapsed = 0;
         self.timer.out_of = self.duration().unwrap_or_default();
         self.state = DecoderState::Active;
+        let mut prev_speed = { *speed.read().unwrap() };
         loop {
             // block if idle to avoid busy waiting
             let request = match self.state {
@@ -236,18 +260,22 @@ impl Decoder {
                     Ok(packet) if packet.track_id() == self.track_id => {
                         match self.decoder.decode(&packet) {
                             Ok(data) => {
+                                let speed = { *speed.read().unwrap() };
                                 let spec = data.spec();
                                 let duration = data.capacity() as u64;
                                 for (proxy, resampler) in self.device_proxies.iter_mut() {
-                                    if resampler.is_none() && proxy.sample_rate != spec.rate {
-                                        // TODO: option to change playback speed
+                                    if (resampler.is_none() && proxy.sample_rate != spec.rate)
+                                        || prev_speed != speed
+                                    {
                                         *resampler = Some(Resampler::new(
                                             *spec,
                                             proxy.sample_rate,
                                             duration,
+                                            speed.into(),
                                         ));
                                     }
                                 }
+                                prev_speed = speed;
 
                                 let mut typed_data = data.make_equivalent::<BaseSample>();
                                 data.convert(&mut typed_data);

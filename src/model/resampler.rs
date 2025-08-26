@@ -16,10 +16,13 @@ pub struct Resampler {
 }
 
 impl Resampler {
-    pub fn new(spec: SignalSpec, out_rate: u32, duration: u64) -> Self {
+    pub fn new(spec: SignalSpec, out_rate: u32, duration: u64, speed: u16) -> Self {
         let duration = duration as usize;
         let n_channels = spec.channels.count();
-        let (in_rate, out_rate) = (spec.rate as usize, out_rate as usize);
+        let (in_rate, out_rate) = (
+            (spec.rate as f32 * (speed as f32) / 100.0) as usize,
+            out_rate as usize,
+        );
         let resampler =
             FftFixedIn::<BaseSample>::new(in_rate, out_rate, duration, 2, n_channels).unwrap();
         let input = vec![Vec::with_capacity(duration); n_channels];

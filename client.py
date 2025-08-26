@@ -78,6 +78,9 @@ while True:
     elif kind == "seek":
         delta = int(input("seconds: ").strip())
         msg = json.dumps({"kind": "seek", "seconds": delta})
+    elif kind == "speed":
+        speed = int(input("speed: ").strip())
+        msg = json.dumps({"kind": "speed", "speed": speed})
     elif kind in ("disable", "enable"):
         device = input("device: ").strip()
         msg = json.dumps({"kind": kind, "device": device})

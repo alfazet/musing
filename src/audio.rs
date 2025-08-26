@@ -16,7 +16,7 @@ use tokio::sync::{
 use crate::{
     constants,
     model::{
-        decoder::{Decoder, DecoderRequest, PlaybackTimer, Seek, Volume},
+        decoder::{Decoder, DecoderRequest, PlaybackTimer, Seek, Speed, Volume},
         device::{Device, DeviceProxy},
         song::{SongEvent, SongProxy},
     },
@@ -34,6 +34,7 @@ enum PlaybackState {
 struct Playback {
     state: PlaybackState,
     volume: Arc<RwLock<Volume>>,
+    speed: Arc<RwLock<Speed>>,
     gapless: bool,
 }
 
@@ -58,6 +59,7 @@ impl Audio {
 
     pub fn play(&mut self, song_proxy: SongProxy) -> Result<()> {
         let volume = Arc::clone(&self.playback.volume);
+        let speed = Arc::clone(&self.playback.speed);
         let (tx_request, rx_request) = crossbeam_channel::unbounded();
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.play(self.tx_event.clone())?;
@@ -75,7 +77,7 @@ impl Audio {
         }
         let mut decoder = Decoder::try_new(song_proxy, device_proxies, self.playback.gapless)?;
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = decoder.run(rx_request, volume) {
+            if let Err(e) = decoder.run(rx_request, volume, speed) {
                 log::error!("decoder error ({})", e);
             }
         });
@@ -238,6 +240,10 @@ impl Audio {
         }
     }
 
+    pub fn set_speed(&mut self, new_speed: u16) {
+        *self.playback.speed.write().unwrap() = new_speed.into();
+    }
+
     pub fn change_volume(&mut self, delta: i8) {
         let mut v_lock = self.playback.volume.write().unwrap();
         let v: u8 = (*v_lock).into();
@@ -284,6 +290,10 @@ impl Audio {
             PlaybackState::Paused => "paused",
         }
         .into()
+    }
+
+    pub fn speed(&self) -> u16 {
+        (*self.playback.speed.read().unwrap()).into()
     }
 }
 

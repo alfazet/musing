@@ -31,9 +31,10 @@ pub enum DeviceRequestKind {
     ListDevices,
 }
 
+pub struct ChangeVolumeArgs(pub i8);
 pub struct SeekArgs(pub i64); // in seconds
 pub struct SetVolumeArgs(pub u8);
-pub struct ChangeVolumeArgs(pub i8);
+pub struct SpeedArgs(pub u16);
 pub enum PlaybackRequestKind {
     ChangeVolume(ChangeVolumeArgs),
     Gapless,
@@ -41,6 +42,7 @@ pub enum PlaybackRequestKind {
     Resume,
     Seek(SeekArgs),
     SetVolume(SetVolumeArgs),
+    Speed(SpeedArgs),
     Stop,
     Toggle,
 }
@@ -216,6 +218,19 @@ impl TryFrom<&mut Map<String, Value>> for SetVolumeArgs {
     }
 }
 
+impl TryFrom<&mut Map<String, Value>> for SpeedArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let speed: u16 = serde_json::from_value(
+            args.remove("speed")
+                .ok_or(anyhow!("key `speed` not found"))?,
+        )?;
+
+        Ok(Self(speed))
+    }
+}
+
 impl TryFrom<&mut Map<String, Value>> for AddArgs {
     type Error = anyhow::Error;
 
@@ -278,14 +293,15 @@ impl TryFrom<&str> for RequestKind {
             "enable" => RequestKind::Device(Device::Enable(map.try_into()?)),
             "listdev" => RequestKind::Device(Device::ListDevices),
 
+            "changevol" => RequestKind::Playback(Playback::ChangeVolume(map.try_into()?)),
             "gapless" => RequestKind::Playback(Playback::Gapless),
             "pause" => RequestKind::Playback(Playback::Pause),
             "resume" => RequestKind::Playback(Playback::Resume),
             "seek" => RequestKind::Playback(Playback::Seek(map.try_into()?)),
+            "setvol" => RequestKind::Playback(Playback::SetVolume(map.try_into()?)),
+            "speed" => RequestKind::Playback(Playback::Speed(map.try_into()?)),
             "stop" => RequestKind::Playback(Playback::Stop),
             "toggle" => RequestKind::Playback(Playback::Toggle),
-            "setvol" => RequestKind::Playback(Playback::SetVolume(map.try_into()?)),
-            "changevol" => RequestKind::Playback(Playback::ChangeVolume(map.try_into()?)),
 
             "add" => RequestKind::Queue(Queue::Add(map.try_into()?)),
             "clear" => RequestKind::Queue(Queue::Clear),
