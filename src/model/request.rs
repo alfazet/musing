@@ -58,11 +58,8 @@ pub enum QueueRequestKind {
 }
 
 pub enum StatusRequestKind {
-    Current,
-    Elapsed,
     Queue,
     State,
-    Volume,
 }
 
 pub enum RequestKind {
@@ -102,19 +99,13 @@ impl TryFrom<&mut Map<String, Value>> for SelectArgs {
         let filters: Vec<Box<dyn Filter>> =
             serde_json::from_value::<Vec<Value>>(args.remove("filters").unwrap_or_default())?
                 .into_iter()
-                .map(|mut v| match v.as_object_mut() {
-                    Some(v) => v.try_into(),
-                    None => Err(anyhow!("`filters` must be an array of JSON maps")),
-                })
+                .map(|v| v.try_into())
                 .collect::<Result<_>>()?;
 
         let comparators: Vec<Comparator> =
             serde_json::from_value::<Vec<Value>>(args.remove("comparators").unwrap_or_default())?
                 .into_iter()
-                .map(|mut v| match v.as_object_mut() {
-                    Some(v) => v.try_into(),
-                    None => Err(anyhow!("`comparators` must be an array of JSON maps")),
-                })
+                .map(|v| v.try_into())
                 .collect::<Result<_>>()?;
 
         Ok(Self(FilterExpr(filters), comparators))
@@ -134,12 +125,7 @@ impl TryFrom<&mut Map<String, Value>> for UniqueArgs {
         let filters: Vec<Box<dyn Filter>> =
             serde_json::from_value::<Vec<Value>>(args.remove("filters").unwrap_or_default())?
                 .into_iter()
-                .map(|mut v| match v.as_object_mut() {
-                    Some(v) => v.try_into(),
-                    // TODO: get rid of these error messages (return the errors from the functions
-                    // that can error out)
-                    None => Err(anyhow!("`filters` must be an array of JSON maps")),
-                })
+                .map(|v| v.try_into())
                 .collect::<Result<_>>()?;
 
         let group_by: Vec<TagKey> =
@@ -264,7 +250,7 @@ impl TryFrom<&str> for RequestKind {
         let mut temp = serde_json::from_str::<Value>(s)?;
         let map = temp
             .as_object_mut()
-            .ok_or(anyhow!("the request must be a JSON map"))?;
+            .ok_or(anyhow!("a request must be a JSON map"))?;
         let kind: String =
             serde_json::from_value(map.remove("kind").ok_or(anyhow!("key `kind` not found"))?)?;
         let kind = match kind.as_str() {
@@ -277,6 +263,7 @@ impl TryFrom<&str> for RequestKind {
             "disable" => RequestKind::Device(Device::Disable(map.try_into()?)),
             "enable" => RequestKind::Device(Device::Enable(map.try_into()?)),
             "listdev" => RequestKind::Device(Device::ListDevices),
+
             "gapless" => RequestKind::Playback(Playback::Gapless),
             "pause" => RequestKind::Playback(Playback::Pause),
             "resume" => RequestKind::Playback(Playback::Resume),
@@ -285,6 +272,7 @@ impl TryFrom<&str> for RequestKind {
             "toggle" => RequestKind::Playback(Playback::Toggle),
             "setvol" => RequestKind::Playback(Playback::SetVolume(map.try_into()?)),
             "changevol" => RequestKind::Playback(Playback::ChangeVolume(map.try_into()?)),
+
             "add" => RequestKind::Queue(Queue::Add(map.try_into()?)),
             "clear" => RequestKind::Queue(Queue::Clear),
             "next" => RequestKind::Queue(Queue::Next),
@@ -295,11 +283,8 @@ impl TryFrom<&str> for RequestKind {
             "sequential" => RequestKind::Queue(Queue::Sequential),
             "single" => RequestKind::Queue(Queue::Single),
 
-            "current" => RequestKind::Status(Status::Current),
-            "elapsed" => RequestKind::Status(Status::Elapsed),
             "queue" => RequestKind::Status(Status::Queue),
             "state" => RequestKind::Status(Status::State),
-            "volume" => RequestKind::Status(Status::Volume),
 
             other => bail!("invalid value of key `kind`: `{}`", other),
         };

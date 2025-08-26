@@ -120,7 +120,7 @@ impl Player {
         }
     }
 
-    fn playback_request(&mut self, req: request::PlaybackRequestKind) -> Response {
+    async fn playback_request(&mut self, req: request::PlaybackRequestKind) -> Response {
         use request::{ChangeVolumeArgs, PlaybackRequestKind, SeekArgs, SetVolumeArgs};
 
         match req {
@@ -128,7 +128,7 @@ impl Player {
                 self.audio.toggle_gapless();
                 Response::new_ok()
             }
-            PlaybackRequestKind::Pause => self.audio.pause().into(),
+            PlaybackRequestKind::Pause => self.audio.pause().await.into(),
             PlaybackRequestKind::Resume => self.audio.resume().into(),
             PlaybackRequestKind::Seek(args) => {
                 let SeekArgs(secs) = args;
@@ -142,7 +142,7 @@ impl Player {
 
                 Response::new_ok()
             }
-            PlaybackRequestKind::Toggle => self.audio.toggle().into(),
+            PlaybackRequestKind::Toggle => self.audio.toggle().await.into(),
             PlaybackRequestKind::ChangeVolume(args) => {
                 let ChangeVolumeArgs(volume) = args;
                 self.audio.change_volume(volume);
@@ -233,26 +233,31 @@ impl Player {
         }
     }
 
-    fn status_request(&self, req: request::StatusRequestKind) -> Response {
+    async fn status_request(&self, req: request::StatusRequestKind) -> Response {
         use request::StatusRequestKind;
 
         match req {
-            StatusRequestKind::Current => match self.queue.current() {
-                Some(entry) => Response::new_ok().with_item("current", &entry),
-                None => Response::new_err("no song is playing right now"),
-            },
-            StatusRequestKind::Elapsed => Response::new_ok()
-                .with_item("elapsed", &self.audio.elapsed())
-                .with_item("duration", &self.audio.duration()),
             StatusRequestKind::Queue => {
                 Response::new_ok().with_item("queue", &self.queue.as_inner())
             }
-            StatusRequestKind::State => Response::new_ok()
-                .with_item("state", &self.audio.state())
-                .with_item("mode", &self.queue.mode())
-                .with_item("gapless", &self.audio.gapless()),
-            StatusRequestKind::Volume => {
-                Response::new_ok().with_item("volume", &self.audio.volume())
+            StatusRequestKind::State => {
+                let mut response = Response::new_ok()
+                    .with_item("gapless", &self.audio.gapless())
+                    .with_item("mode", &self.queue.mode())
+                    .with_item("state", &self.audio.state())
+                    .with_item("volume", &self.audio.volume());
+                if let Some(timer) = self.audio.playback_timer().await {
+                    response = response
+                        .with_item("elapsed", &timer.elapsed)
+                        .with_item("out_of", &timer.out_of);
+                }
+                if let Some(current) = self.queue.current() {
+                    response = response
+                        .with_item("db_id", &current.db_id)
+                        .with_item("queue_id", &current.queue_id);
+                }
+
+                response
             }
         }
     }
@@ -261,9 +266,9 @@ impl Player {
         match req {
             RequestKind::Db(req) => self.db_request(req).await,
             RequestKind::Device(req) => self.device_request(req),
-            RequestKind::Playback(req) => self.playback_request(req),
+            RequestKind::Playback(req) => self.playback_request(req).await,
             RequestKind::Queue(req) => self.queue_request(req),
-            RequestKind::Status(req) => self.status_request(req),
+            RequestKind::Status(req) => self.status_request(req).await,
         }
     }
 

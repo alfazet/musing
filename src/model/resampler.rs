@@ -7,18 +7,15 @@ use symphonia::core::{
 
 use crate::model::device::BaseSample;
 
-pub struct Resampler<T> {
+pub struct Resampler {
     resampler: FftFixedIn<BaseSample>,
     input: Vec<Vec<BaseSample>>,
     output: Vec<Vec<BaseSample>>,
-    interleaved: Vec<T>,
+    interleaved: Vec<BaseSample>,
     duration: usize,
 }
 
-impl<T> Resampler<T>
-where
-    T: Sample + FromSample<BaseSample> + IntoSample<BaseSample>,
-{
+impl Resampler {
     pub fn new(spec: SignalSpec, out_rate: u32, duration: u64) -> Self {
         let duration = duration as usize;
         let n_channels = spec.channels.count();
@@ -38,8 +35,10 @@ where
         }
     }
 
-    pub fn resample(&mut self, samples: &AudioBufferRef<'_>) -> Option<&[T]> {
-        convert_samples(samples, &mut self.input);
+    pub fn resample(&mut self, samples: &AudioBuffer<BaseSample>) -> Option<&[BaseSample]> {
+        for (i, in_chan) in self.input.iter_mut().enumerate() {
+            in_chan.extend(samples.chan(i).iter());
+        }
         // not enough samples to succesfully resample
         if self.input[0].len() < self.duration {
             return None;
@@ -59,7 +58,8 @@ where
             channel.drain(0..self.duration);
         }
         let num_channels = self.output.len();
-        self.interleaved.resize(num_channels * n_written, T::MID);
+        self.interleaved
+            .resize(num_channels * n_written, BaseSample::MID);
         for (i, frame) in self.interleaved.chunks_exact_mut(num_channels).enumerate() {
             for (chan, s) in frame.iter_mut().enumerate() {
                 *s = self.output[chan][i].into_sample();
@@ -67,31 +67,5 @@ where
         }
 
         Some(&self.interleaved)
-    }
-}
-
-fn convert_samples(input: &AudioBufferRef<'_>, output: &mut [Vec<BaseSample>]) {
-    match input {
-        AudioBufferRef::U8(input) => convert_samples_inner(input, output),
-        AudioBufferRef::U16(input) => convert_samples_inner(input, output),
-        AudioBufferRef::U24(input) => convert_samples_inner(input, output),
-        AudioBufferRef::U32(input) => convert_samples_inner(input, output),
-        AudioBufferRef::S8(input) => convert_samples_inner(input, output),
-        AudioBufferRef::S16(input) => convert_samples_inner(input, output),
-        AudioBufferRef::S24(input) => convert_samples_inner(input, output),
-        AudioBufferRef::S32(input) => convert_samples_inner(input, output),
-        AudioBufferRef::F32(input) => convert_samples_inner(input, output),
-        AudioBufferRef::F64(input) => convert_samples_inner(input, output),
-    }
-}
-
-// convert samples to the type expected by the resampler
-fn convert_samples_inner<T>(input: &AudioBuffer<T>, output: &mut [Vec<BaseSample>])
-where
-    T: Sample + IntoSample<BaseSample>,
-{
-    for (i, out_chan) in output.iter_mut().enumerate() {
-        let in_chan = input.chan(i);
-        out_chan.extend(in_chan.iter().map(|&s| s.into_sample()));
     }
 }

@@ -8,12 +8,15 @@ use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
 };
-use tokio::sync::mpsc::{self as tokio_chan};
+use tokio::sync::{
+    mpsc::{self as tokio_chan},
+    oneshot,
+};
 
 use crate::{
     constants,
     model::{
-        decoder::{Decoder, DecoderRequest, Seek, Volume},
+        decoder::{Decoder, DecoderRequest, PlaybackTimer, Seek, Volume},
         device::{Device, DeviceProxy},
         song::{SongEvent, SongProxy},
     },
@@ -31,8 +34,6 @@ enum PlaybackState {
 struct Playback {
     state: PlaybackState,
     volume: Arc<RwLock<Volume>>,
-    elapsed: Arc<RwLock<u64>>,
-    duration: u64,
     gapless: bool,
 }
 
@@ -57,7 +58,6 @@ impl Audio {
 
     pub fn play(&mut self, song_proxy: SongProxy) -> Result<()> {
         let volume = Arc::clone(&self.playback.volume);
-        let elapsed = Arc::clone(&self.playback.elapsed);
         let (tx_request, rx_request) = crossbeam_channel::unbounded();
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.play(self.tx_event.clone())?;
@@ -74,9 +74,8 @@ impl Audio {
             let _ = tx_request.send(DecoderRequest::Stop);
         }
         let mut decoder = Decoder::try_new(song_proxy, device_proxies, self.playback.gapless)?;
-        self.playback.duration = decoder.duration().unwrap_or_default();
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = decoder.run(rx_request, volume, elapsed) {
+            if let Err(e) = decoder.run(rx_request, volume) {
                 log::error!("decoder error ({})", e);
             }
         });
@@ -175,9 +174,16 @@ impl Audio {
         self.playback.gapless ^= true;
     }
 
-    pub fn pause(&mut self) -> Result<()> {
+    pub async fn pause(&mut self) -> Result<()> {
         if let PlaybackState::Stopped = self.playback.state {
             return Ok(());
+        }
+        if let Some(tx_request) = &self.tx_request {
+            let (tx, rx) = oneshot::channel();
+            // wait for confirmation before pausing devices so that the decoder
+            // can finish sending a packet if it's in-progress
+            let _ = tx_request.send(DecoderRequest::Pause(tx));
+            let _ = rx.await;
         }
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.pause()?;
@@ -190,6 +196,9 @@ impl Audio {
     pub fn resume(&mut self) -> Result<()> {
         if let PlaybackState::Stopped = self.playback.state {
             return Ok(());
+        }
+        if let Some(tx_request) = &self.tx_request {
+            let _ = tx_request.send(DecoderRequest::Resume);
         }
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.resume()?;
@@ -210,9 +219,9 @@ impl Audio {
         let _ = self.tx_request.take();
     }
 
-    pub fn toggle(&mut self) -> Result<()> {
+    pub async fn toggle(&mut self) -> Result<()> {
         match self.playback.state {
-            PlaybackState::Playing => self.pause(),
+            PlaybackState::Playing => self.pause().await,
             PlaybackState::Paused => self.resume(),
             _ => Ok(()),
         }
@@ -253,12 +262,15 @@ impl Audio {
         (*self.playback.volume.read().unwrap()).into()
     }
 
-    pub fn elapsed(&self) -> u64 {
-        *self.playback.elapsed.read().unwrap()
-    }
+    pub async fn playback_timer(&self) -> Option<PlaybackTimer> {
+        if let Some(tx_request) = &self.tx_request {
+            let (tx, rx) = oneshot::channel();
+            let _ = tx_request.send(DecoderRequest::Timer(tx));
 
-    pub fn duration(&self) -> u64 {
-        self.playback.duration
+            rx.await.ok()
+        } else {
+            None
+        }
     }
 
     pub fn gapless(&self) -> bool {

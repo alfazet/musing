@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow, bail};
 use regex::Regex;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use unidecode::unidecode;
 
 use crate::model::{song::Song, tag_key::TagKey};
@@ -41,16 +41,20 @@ impl Filter for RegexFilter {
     }
 }
 
+// TODO:
 impl Filter for FuzzyFilter {
     fn matches(&self, _: &Song) -> bool {
         true
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for Box<dyn Filter> {
+impl TryFrom<Value> for Box<dyn Filter> {
     type Error = anyhow::Error;
 
-    fn try_from(map: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(mut v: Value) -> Result<Self> {
+        let map = v
+            .as_object_mut()
+            .ok_or(anyhow!("a filter must be a JSON map"))?;
         let kind = map.remove("kind").ok_or(anyhow!("key `kind` not found"))?;
         let tag: TagKey = map
             .remove("tag")

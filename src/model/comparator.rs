@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow, bail};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::cmp::Ordering;
 
 use crate::model::{
@@ -32,10 +32,13 @@ impl TryFrom<&str> for ComparisonOrder {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for Comparator {
+impl TryFrom<Value> for Comparator {
     type Error = anyhow::Error;
 
-    fn try_from(map: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(mut v: Value) -> Result<Self> {
+        let map = v
+            .as_object_mut()
+            .ok_or(anyhow!("a comparator must be a JSON map"))?;
         let tag: TagKey = map
             .remove("tag")
             .ok_or(anyhow!("key `tag` not found"))?
