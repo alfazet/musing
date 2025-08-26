@@ -19,12 +19,12 @@ pub struct Metadata {
 }
 
 pub struct Song {
-    pub path: PathBuf, // absolute path
+    pub path: PathBuf, // relative path
     pub metadata: Metadata,
 }
 
 pub struct SongProxy {
-    pub path: PathBuf, // absolute path
+    pub path: PathBuf, // relative path
 }
 
 #[derive(Debug)]
@@ -57,11 +57,10 @@ impl Metadata {
     }
 }
 
-impl TryFrom<&Path> for Song {
-    type Error = anyhow::Error;
-
-    fn try_from(path: &Path) -> Result<Self> {
-        let mut probe_res = song_utils::get_probe_result(path, false)?;
+impl Song {
+    pub fn try_new(music_dir: &Path, rel_path: &Path) -> Result<Self> {
+        let abs_path = music_dir.join(rel_path);
+        let mut probe_res = song_utils::get_probe_result(&abs_path, false)?;
         let metadata_container = probe_res
             .format
             .metadata()
@@ -74,28 +73,16 @@ impl TryFrom<&Path> for Song {
             .map(|m| m.current().map(Metadata::from).unwrap_or_default())
             .unwrap_or_default();
         let song = Self {
-            path: path.to_path_buf(),
+            path: rel_path.to_path_buf(),
             metadata: metadata_container.merge(metadata_probe),
         };
 
         Ok(song)
     }
-}
 
-/*
-impl Song {
     // TODO: base64 encode
     pub fn get_cover_art(&self) -> Option<Vec<u8>> {
         None
-    }
-}
-*/
-
-impl From<&Song> for SongProxy {
-    fn from(song: &Song) -> SongProxy {
-        Self {
-            path: song.path.clone(),
-        }
     }
 }
 

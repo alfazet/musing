@@ -11,9 +11,9 @@ use std::{
 };
 
 use crate::model::{
-    request::{MetadataArgs, SelectArgs, UniqueArgs},
+    request::{LsArgs, MetadataArgs, SelectArgs, UniqueArgs},
     response::Response,
-    song::{Metadata, Song},
+    song::{Metadata, Song, SongProxy},
 };
 
 struct DataRow {
@@ -30,31 +30,33 @@ pub struct Database {
 }
 
 impl Database {
-    fn to_data_rows(files: &[PathBuf], id_offset: u32) -> Vec<DataRow> {
+    fn to_data_rows(music_dir: &Path, files: &[PathBuf], id_offset: u32) -> Vec<DataRow> {
         files
             .par_iter()
             .enumerate()
-            .filter_map(move |(id, file)| match Song::try_from(file.as_path()) {
-                Ok(song) => Some(DataRow {
-                    id: id as u32 + id_offset + 1,
-                    song,
-                    to_delete: false,
-                }),
-                Err(e) => {
-                    log::error!(
-                        "could not read any audio from {} ({})",
-                        file.to_string_lossy(),
-                        e
-                    );
-                    None
-                }
-            })
+            .filter_map(
+                move |(id, file)| match Song::try_new(music_dir, file.as_path()) {
+                    Ok(song) => Some(DataRow {
+                        id: id as u32 + id_offset + 1,
+                        song,
+                        to_delete: false,
+                    }),
+                    Err(e) => {
+                        log::error!(
+                            "could not read any audio from {} ({})",
+                            file.to_string_lossy(),
+                            e
+                        );
+                        None
+                    }
+                },
+            )
             .collect()
     }
 
     pub fn from_dir(music_dir: &Path, allowed_exts: &[String]) -> Result<Self> {
         let files = db_utils::walk_dir(music_dir, SystemTime::UNIX_EPOCH, allowed_exts)?;
-        let data_rows = Self::to_data_rows(&files, 0);
+        let data_rows = Self::to_data_rows(music_dir, &files, 0);
         let last_update = SystemTime::now();
 
         Ok(Self {
@@ -65,11 +67,16 @@ impl Database {
         })
     }
 
-    pub fn song_by_id(&self, id: u32) -> Option<&Song> {
-        self.data_rows
+    pub fn song_by_id(&self, id: u32) -> Option<SongProxy> {
+        let rel_path = self
+            .data_rows
             .binary_search_by_key(&id, |row| row.id)
-            .map(|i| &self.data_rows[i].song)
-            .ok()
+            .map(|i| &self.data_rows[i].song.path)
+            .ok()?;
+
+        Some(SongProxy {
+            path: self.music_dir.join(rel_path),
+        })
     }
 
     pub fn reset(&mut self) -> Response {
@@ -82,14 +89,54 @@ impl Database {
         }
     }
 
-    // TODO:
-    // get (ids, paths) of songs located in `dir`
-    // to be used by people who don't tag their music
-    // and instead rely on the directory tree
-    // (should be parallelizable)
-    // pub fn ls(&self, LsArgs(dir): LsArgs) -> Response {
-    //
-    // }
+    // get ids of songs located in `path`
+    // allows to use musing with untagged music collections
+    // `path` can be relative (to the provided music dir) or absolute
+    // if `path` points to a single file, ls returns the id of that file
+    pub fn ls(&self, LsArgs(mut path): LsArgs) -> Response {
+        if path.is_absolute() {
+            if let Ok(rel_path) = path.strip_prefix(&self.music_dir).map(|p| p.to_path_buf()) {
+                path = rel_path;
+            } else {
+                return Response::new_err(format!(
+                    "path `{}` points outside the music directory",
+                    path.to_string_lossy()
+                ));
+            }
+        }
+        // at this point path is relative to the music dir
+        let abs_path = self.music_dir.join(&path);
+        match abs_path.metadata() {
+            Ok(meta) => {
+                let ids = if meta.is_file() {
+                    match self
+                        .data_rows
+                        .par_iter()
+                        .find_any(|&row| row.song.path == path)
+                    {
+                        Some(row) => vec![row.id],
+                        None => vec![],
+                    }
+                } else {
+                    self.data_rows
+                        .par_iter()
+                        .filter_map(|row| {
+                            if let Some(parent) = row.song.path.parent()
+                                && parent == path
+                            {
+                                Some(row.id)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
+
+                Response::new_ok().with_item("ids", &ids)
+            }
+            Err(e) => Response::new_err(e.to_string()),
+        }
+    }
 
     // get values of `tags` for songs with `ids`
     pub fn metadata(&self, MetadataArgs(ids, tags): MetadataArgs) -> Response {
@@ -181,7 +228,7 @@ impl Database {
                 .and_then(|metadata| metadata.modified())
             {
                 if mod_time >= self.last_update
-                    && let Ok(song) = Song::try_from(row.song.path.as_path())
+                    && let Ok(song) = Song::try_new(&self.music_dir, row.song.path.as_path())
                 {
                     row.song = song;
                 }
@@ -196,6 +243,7 @@ impl Database {
                 Err(e) => return Response::new_err(e.to_string()),
             };
         let mut new_data_rows = Self::to_data_rows(
+            &self.music_dir,
             &new_files,
             self.data_rows.last().map(|row| row.id).unwrap_or(0),
         );
@@ -210,7 +258,7 @@ mod db_utils {
     use super::*;
 
     pub fn walk_dir(
-        root_dir: &Path,
+        music_dir: &Path,
         timestamp: SystemTime,
         allowed_exts: &[String],
     ) -> Result<Vec<PathBuf>> {
@@ -226,21 +274,22 @@ mod db_utils {
         };
 
         // TODO: ignore specified directories (similar to a .gitignore)
-        if !root_dir.exists() {
+        if !music_dir.exists() {
             bail!(format!(
                 "directory `{}` doesn't exist",
-                root_dir.to_string_lossy()
+                music_dir.to_string_lossy()
             ));
         }
-        let list = WalkDir::new(root_dir)
+        let list = WalkDir::new(music_dir)
             .into_iter()
             .filter_map(|entry| {
                 if let Ok(entry) = entry
-                    && let Ok(full_path) = entry.path().canonicalize()
                     && entry.file_type.is_file()
+                    && let Ok(full_path) = entry.path().canonicalize()
                     && is_ok(&full_path)
+                    && let Ok(rel_path) = full_path.strip_prefix(music_dir)
                 {
-                    return Some(full_path);
+                    return Some(rel_path.to_path_buf());
                 }
                 None
             })

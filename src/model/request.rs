@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Map, Value};
+use std::path::PathBuf;
 use tokio::sync::oneshot;
 
 use crate::model::{
@@ -9,10 +10,12 @@ use crate::model::{
     tag_key::TagKey,
 };
 
+pub struct LsArgs(pub PathBuf);
 pub struct MetadataArgs(pub Vec<u32>, pub Vec<TagKey>);
 pub struct SelectArgs(pub FilterExpr, pub Vec<Comparator>);
 pub struct UniqueArgs(pub TagKey, pub FilterExpr, pub Vec<TagKey>);
 pub enum DbRequestKind {
+    Ls(LsArgs),
     Metadata(MetadataArgs),
     Reset,
     Select(SelectArgs),
@@ -73,6 +76,16 @@ pub enum RequestKind {
 pub struct Request {
     pub kind: RequestKind,
     pub tx_response: oneshot::Sender<Response>,
+}
+
+impl TryFrom<&mut Map<String, Value>> for LsArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let dir: PathBuf =
+            serde_json::from_value(args.remove("dir").ok_or(anyhow!("key `dir` not found"))?)?;
+        Ok(Self(dir))
+    }
 }
 
 impl TryFrom<&mut Map<String, Value>> for MetadataArgs {
@@ -254,6 +267,7 @@ impl TryFrom<&str> for RequestKind {
         let kind: String =
             serde_json::from_value(map.remove("kind").ok_or(anyhow!("key `kind` not found"))?)?;
         let kind = match kind.as_str() {
+            "ls" => RequestKind::Db(Db::Ls(map.try_into()?)),
             "metadata" => RequestKind::Db(Db::Metadata(map.try_into()?)),
             "reset" => RequestKind::Db(Db::Reset),
             "select" => RequestKind::Db(Db::Select(map.try_into()?)),

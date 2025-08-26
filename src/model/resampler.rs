@@ -1,7 +1,7 @@
 use rubato::{FftFixedIn, Resampler as RubatoResampler};
 use symphonia::core::{
-    audio::{AudioBuffer, AudioBufferRef, Signal, SignalSpec},
-    conv::{FromSample, IntoSample},
+    audio::{AudioBuffer, Signal, SignalSpec},
+    conv::IntoSample,
     sample::Sample,
 };
 

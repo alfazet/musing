@@ -1,16 +1,14 @@
 use anyhow::{Result, anyhow, bail};
-use crossbeam_channel::{self as cbeam_chan, TryRecvError, TrySendError};
-use std::collections::VecDeque;
+use crossbeam_channel::{self as cbeam_chan, TryRecvError};
 use std::{
     io,
     sync::{Arc, RwLock},
 };
 use symphonia::core::{
-    audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef, SampleBuffer, Signal},
+    audio::{AudioBuffer, SampleBuffer, Signal},
     codecs::{Decoder as SymphoniaDecoder, DecoderOptions as SymphoniaDecoderOptions},
     errors::Error as SymphoniaError,
     formats::{FormatReader, SeekMode, SeekTo},
-    sample::Sample as SymphoniaSample,
     units::{Time, TimeBase},
 };
 use tokio::sync::oneshot;

@@ -34,7 +34,7 @@ impl Player {
             ));
         };
 
-        Ok(song.into())
+        Ok(song)
     }
 
     fn play(&mut self, db_id: u32) -> Result<()> {
@@ -72,6 +72,7 @@ impl Player {
                 use request::DbRequestKind;
 
                 let response = match req {
+                    DbRequestKind::Ls(args) => self.database.ls(args),
                     DbRequestKind::Metadata(args) => self.database.metadata(args),
                     DbRequestKind::Reset => {
                         self.queue.clear();
