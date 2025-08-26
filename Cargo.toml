@@ -9,6 +9,7 @@ clap = { version = "4.5.40", features = ["derive"] }
 cpal = { version = "0.16.0", features = ["jack"] }
 crossbeam-channel = "0.5.15"
 dirs = "6.0.0"
+dunce = "1.0.5"
 erased-serde = "0.4.6"
 jwalk = "0.8.1"
 lazy_static = "1.5.0"

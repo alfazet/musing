@@ -285,7 +285,7 @@ mod db_utils {
             .filter_map(|entry| {
                 if let Ok(entry) = entry
                     && entry.file_type.is_file()
-                    && let Ok(full_path) = entry.path().canonicalize()
+                    && let Ok(full_path) = dunce::canonicalize(entry.path())
                     && is_ok(&full_path)
                     && let Ok(rel_path) = full_path.strip_prefix(music_dir)
                 {
