@@ -5,15 +5,20 @@ use serde_json::Map;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
+    fs::File,
+    io::{BufReader, prelude::*},
     iter::{FromIterator, IntoIterator, Iterator},
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
-use crate::model::{
-    request::{LsArgs, MetadataArgs, SelectArgs, UniqueArgs},
-    response::Response,
-    song::{Metadata, Song, SongProxy},
+use crate::{
+    constants,
+    model::{
+        request::{LsArgs, MetadataArgs, SelectArgs, UniqueArgs},
+        response::Response,
+        song::{Metadata, Song, SongProxy},
+    },
 };
 
 struct DataRow {
@@ -93,26 +98,24 @@ impl Database {
     // allows to use musing with untagged music collections
     // `path` can be relative (to the provided music dir) or absolute
     // if `path` points to a single file, ls returns the id of that file
-    pub fn ls(&self, LsArgs(mut path): LsArgs) -> Response {
-        if path.is_absolute() {
-            if let Ok(rel_path) = path.strip_prefix(&self.music_dir).map(|p| p.to_path_buf()) {
-                path = rel_path;
-            } else {
-                return Response::new_err(format!(
-                    "path `{}` points outside the music directory",
-                    path.to_string_lossy()
-                ));
-            }
-        }
-        // at this point path is relative to the music dir
-        let abs_path = self.music_dir.join(&path);
+    pub fn ls(&self, LsArgs(path): LsArgs) -> Response {
+        let abs_path = db_utils::to_abs_path(&self.music_dir, &path);
+        let Ok(rel_path) = abs_path
+            .strip_prefix(&self.music_dir)
+            .map(|p| p.to_path_buf())
+        else {
+            return Response::new_err(format!(
+                "path `{}` points outside the music directory",
+                abs_path.to_string_lossy()
+            ));
+        };
         match abs_path.metadata() {
             Ok(meta) => {
                 let ids = if meta.is_file() {
                     match self
                         .data_rows
                         .par_iter()
-                        .find_any(|&row| row.song.path == path)
+                        .find_any(|&row| row.song.path == rel_path)
                     {
                         Some(row) => vec![row.id],
                         None => vec![],
@@ -122,7 +125,7 @@ impl Database {
                         .par_iter()
                         .filter_map(|row| {
                             if let Some(parent) = row.song.path.parent()
-                                && parent == path
+                                && parent == rel_path
                             {
                                 Some(row.id)
                             } else {
@@ -220,13 +223,19 @@ impl Database {
     }
 
     pub fn update(&mut self) -> Response {
+        // do a full rescan if the ignore file changed recently
+        if let Ok(ignore_mod_time) = self
+            .music_dir
+            .join(Path::new(constants::DEFAULT_IGNORE_FILE))
+            .metadata()
+            .and_then(|m| m.modified())
+            && ignore_mod_time >= self.last_update
+        {
+            return self.reset();
+        }
+
         self.data_rows.par_iter_mut().for_each(|row| {
-            if let Ok(mod_time) = row
-                .song
-                .path
-                .metadata()
-                .and_then(|metadata| metadata.modified())
-            {
+            if let Ok(mod_time) = row.song.path.metadata().and_then(|m| m.modified()) {
                 if mod_time >= self.last_update
                     && let Ok(song) = Song::try_new(&self.music_dir, row.song.path.as_path())
                 {
@@ -257,15 +266,23 @@ impl Database {
 mod db_utils {
     use super::*;
 
+    pub fn to_abs_path(root_dir: &Path, path: &Path) -> PathBuf {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            root_dir.join(path)
+        }
+    }
+
     pub fn walk_dir(
-        music_dir: &Path,
+        root_dir: &Path,
         timestamp: SystemTime,
         allowed_exts: &[String],
     ) -> Result<Vec<PathBuf>> {
         let is_ok = move |path: &Path| -> bool {
             if let Some(ext) = path.extension().and_then(|ext| ext.to_str())
                 && allowed_exts.iter().any(|allowed_ext| allowed_ext == ext)
-                && let Ok(creation_time) = path.metadata().and_then(|meta| meta.created())
+                && let Ok(creation_time) = path.metadata().and_then(|m| m.created())
             {
                 return creation_time >= timestamp;
             }
@@ -273,21 +290,38 @@ mod db_utils {
             false
         };
 
-        // TODO: ignore specified directories (similar to a .gitignore)
-        if !music_dir.exists() {
+        if !root_dir.exists() {
             bail!(format!(
                 "directory `{}` doesn't exist",
-                music_dir.to_string_lossy()
+                root_dir.to_string_lossy()
             ));
         }
-        let list = WalkDir::new(music_dir)
+        let mut ignored = HashSet::new();
+        if let Ok(file) = File::open(root_dir.join(constants::DEFAULT_IGNORE_FILE)) {
+            let stream = BufReader::new(file);
+            for line in stream.lines() {
+                if let Ok(line) = &line {
+                    let abs_path = db_utils::to_abs_path(root_dir, Path::new(line));
+                    ignored.insert(abs_path);
+                }
+            }
+        }
+        let list = WalkDir::new(root_dir)
+            .process_read_dir(move |_, _, _, children| {
+                children.retain(|entry| {
+                    entry
+                        .as_ref()
+                        .map(|e| !ignored.contains(&*(e.parent_path)))
+                        .unwrap_or(false)
+                });
+            })
             .into_iter()
             .filter_map(|entry| {
                 if let Ok(entry) = entry
                     && entry.file_type.is_file()
                     && let Ok(full_path) = dunce::canonicalize(entry.path())
                     && is_ok(&full_path)
-                    && let Ok(rel_path) = full_path.strip_prefix(music_dir)
+                    && let Ok(rel_path) = full_path.strip_prefix(root_dir)
                 {
                     return Some(rel_path.to_path_buf());
                 }
