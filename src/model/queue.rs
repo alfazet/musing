@@ -6,7 +6,7 @@ use std::{
     rc::Rc,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub id: u32,
     pub path: Rc<Path>, // absolute paths
@@ -33,6 +33,15 @@ pub struct Queue {
     mode: QueueMode,
     history: HashSet<u32>,
     next_id: u32,
+}
+
+impl From<(u32, PathBuf)> for Entry {
+    fn from((id, path): (u32, PathBuf)) -> Self {
+        Self {
+            id,
+            path: path.into(),
+        }
+    }
 }
 
 impl Random {
@@ -215,7 +224,6 @@ impl Queue {
     }
 }
 
-/*
 #[cfg(test)]
 mod test {
     use super::*;
@@ -223,28 +231,28 @@ mod test {
     #[test]
     fn add_and_remove() {
         let mut queue = Queue::new();
-        queue.add(1001, None);
-        queue.add(1002, Some(0));
-        queue.add(1003, None);
-        queue.add(1004, Some(2));
+        queue.add("a", None);
+        queue.add("b", Some(0));
+        queue.add("c", None);
+        queue.add("d", Some(2));
         let expected = &[
-            (2, 1002).into(),
-            (1, 1001).into(),
-            (4, 1004).into(),
-            (3, 1003).into(),
+            (2, "b".into()).into(),
+            (1, "a".into()).into(),
+            (4, "d".into()).into(),
+            (3, "c".into()).into(),
         ];
         assert_eq!(queue.as_inner(), expected);
 
         queue.remove(4);
         queue.remove(2137);
-        queue.add(1005, None);
+        queue.add("e", None);
         queue.remove(2);
-        queue.add(1006, Some(1));
+        queue.add("f", Some(1));
         let expected = &[
-            (1, 1001).into(),
-            (6, 1006).into(),
-            (3, 1003).into(),
-            (5, 1005).into(),
+            (1, "a".into()).into(),
+            (6, "f".into()).into(),
+            (3, "c".into()).into(),
+            (5, "e".into()).into(),
         ];
         assert_eq!(queue.as_inner(), expected);
     }
@@ -253,41 +261,41 @@ mod test {
     fn traversing() {
         let mut queue = Queue::new();
         let n = 5;
-        for i in 1001..=(1000 + n) {
-            queue.add(i, None);
+        for i in 1..=n {
+            queue.add(format!("song{}", i), None);
         }
 
         queue.move_next();
         queue.move_next();
-        assert_eq!(queue.current(), Some((2, 1002).into()));
+        assert_eq!(queue.current(), Some((2, "song2".into()).into()));
         queue.move_next();
         queue.move_prev();
-        assert_eq!(queue.current(), Some((2, 1002).into()));
+        assert_eq!(queue.current(), Some((2, "song2".into()).into()));
         queue.move_next();
         queue.move_next();
-        assert_eq!(queue.current(), Some((4, 1004).into()));
+        assert_eq!(queue.current(), Some((4, "song4".into()).into()));
         queue.move_next();
         queue.move_next();
         assert_eq!(queue.current(), None);
         queue.move_prev();
-        assert_eq!(queue.current(), Some((5, 1005).into()));
+        assert_eq!(queue.current(), Some((5, "song5".into()).into()));
         queue.move_next();
         queue.move_next();
-        assert_eq!(queue.current(), Some((1, 1001).into()));
+        assert_eq!(queue.current(), Some((1, "song1".into()).into()));
     }
 
     #[test]
     fn random() {
         let mut queue = Queue::new();
         let n = 100;
-        for i in 1000..(1000 + n) {
-            queue.add(i, None);
+        for i in 1..(n + 1) {
+            queue.add(format!("song{}", i), None);
         }
 
         let mut seen = HashSet::new();
         queue.move_next();
         let cur_on_toggle = queue.current();
-        seen.insert(cur_on_toggle.unwrap().id);
+        seen.insert(cur_on_toggle.clone().unwrap().id);
         queue.start_random();
         for i in 0..(n - 1) {
             let cur = queue.current();
@@ -295,11 +303,10 @@ mod test {
                 // check that toggling random doesn't "move" the current song
                 assert_eq!(cur, cur_on_toggle);
             } else {
-                assert!(cur.is_some() && !seen.contains(&cur.unwrap().id));
+                assert!(cur.is_some() && !seen.contains(&cur.clone().unwrap().id));
             }
-            seen.insert(cur.unwrap().id);
+            seen.insert(cur.clone().unwrap().id);
             queue.move_next();
         }
     }
 }
-*/

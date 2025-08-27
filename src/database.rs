@@ -5,7 +5,7 @@ use serde_json::Map;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    fs::File,
+    fs::{self, File},
     hash::{DefaultHasher, Hash, Hasher},
     io::{BufReader, prelude::*},
     iter::{FromIterator, IntoIterator, Iterator},
@@ -353,5 +353,46 @@ mod db_utils {
             .collect();
 
         Ok(list)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn walk_dir_with_ignore() {
+        let tmp = std::env::temp_dir();
+        let dir = tmp.join(format!(
+            "musing_test_{}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        ));
+
+        let n = 10;
+        let _ = fs::create_dir(&dir);
+        for i in 1..=n {
+            let _ = File::create(&dir.join(format!("song{}.xyz", i)));
+        }
+        let _ = fs::create_dir(dir.join("ok_dir"));
+        for i in 1..=n {
+            let _ = File::create(&dir.join(format!("ok_dir/song_ok{}.xyz", i)));
+        }
+        let _ = fs::create_dir(dir.join("bad_dir"));
+        for i in 1..=n {
+            let _ = File::create(&dir.join(format!("bad_dir/song_bad{}.xyz", i)));
+        }
+
+        let mut ignore = File::create(dir.join(constants::DEFAULT_IGNORE_FILE)).unwrap();
+        let _ = ignore.write_all(b"bad_dir");
+        let res = db_utils::walk_dir(&dir, SystemTime::UNIX_EPOCH, &["xyz".into()]).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(res.len(), 20);
+        assert!(
+            res.iter()
+                .all(|path| !path.to_string_lossy().contains("bad_dir"))
+        );
     }
 }

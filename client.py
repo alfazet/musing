@@ -17,8 +17,8 @@ while True:
         dir = input("dir: ").strip()
         msg = json.dumps({"kind": "ls", "dir": dir})
     elif kind == "metadata":
-        paths = input("paths: ").strip().split(",")
-        tags = input("tags: ").strip().split(",")
+        paths = input("paths: ").strip().split(";")
+        tags = input("tags: ").strip().split(";")
         msg = json.dumps({"kind": "metadata", "paths": paths, "tags": tags})
     elif kind == "select":
         n_filters = int(input("n_filters: ").strip())
@@ -57,14 +57,14 @@ while True:
             }
         )
     elif kind == "add":
-        paths = input("paths: ").strip().split(",")
+        paths = input("paths: ").strip().split(";")
         pos = int(input("pos: ").strip())
         request = {"kind": "add", "paths": paths}
         if pos >= 0:
             request["pos"] = pos
         msg = json.dumps(request)
     elif kind == "remove":
-        ids = list(map(int, input("ids: ").strip().split(",")))
+        ids = list(map(int, input("ids: ").strip().split(";")))
         msg = json.dumps({"kind": "remove", "ids": ids})
     elif kind == "play":
         id = int(input("id: ").strip())
