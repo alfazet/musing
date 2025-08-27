@@ -11,13 +11,12 @@ use crate::model::{
 };
 
 pub struct LsArgs(pub PathBuf);
-pub struct MetadataArgs(pub Vec<u32>, pub Vec<TagKey>);
+pub struct MetadataArgs(pub Vec<PathBuf>, pub Vec<TagKey>);
 pub struct SelectArgs(pub FilterExpr, pub Vec<Comparator>);
 pub struct UniqueArgs(pub TagKey, pub FilterExpr, pub Vec<TagKey>);
 pub enum DbRequestKind {
     Ls(LsArgs),
     Metadata(MetadataArgs),
-    Reset,
     Select(SelectArgs),
     Unique(UniqueArgs),
     Update,
@@ -47,7 +46,7 @@ pub enum PlaybackRequestKind {
     Toggle,
 }
 
-pub struct AddArgs(pub Vec<u32>, pub Option<usize>); // db ids
+pub struct AddArgs(pub Vec<PathBuf>, pub Option<usize>); // relative or absolute paths
 pub struct PlayArgs(pub u32); // queue id
 pub struct RemoveArgs(pub Vec<u32>); // queue ids
 pub enum QueueRequestKind {
@@ -94,8 +93,10 @@ impl TryFrom<&mut Map<String, Value>> for MetadataArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
-        let ids: Vec<u32> =
-            serde_json::from_value(args.remove("ids").ok_or(anyhow!("key `ids` not found"))?)?;
+        let paths: Vec<PathBuf> = serde_json::from_value(
+            args.remove("paths")
+                .ok_or(anyhow!("key `paths` not found"))?,
+        )?;
         let tags: Vec<TagKey> = serde_json::from_value::<Vec<String>>(
             args.remove("tags").ok_or(anyhow!("key `tags` not found"))?,
         )?
@@ -103,7 +104,7 @@ impl TryFrom<&mut Map<String, Value>> for MetadataArgs {
         .map(|s| TagKey::try_from(s.as_str()))
         .collect::<Result<_>>()?;
 
-        Ok(Self(ids, tags))
+        Ok(Self(paths, tags))
     }
 }
 
@@ -235,11 +236,13 @@ impl TryFrom<&mut Map<String, Value>> for AddArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
-        let ids: Vec<u32> =
-            serde_json::from_value(args.remove("ids").ok_or(anyhow!("key `ids` not found"))?)?;
+        let paths: Vec<PathBuf> = serde_json::from_value(
+            args.remove("paths")
+                .ok_or(anyhow!("key `paths` not found"))?,
+        )?;
         let pos = args.remove("pos").map(serde_json::from_value).transpose()?;
 
-        Ok(Self(ids, pos))
+        Ok(Self(paths, pos))
     }
 }
 
@@ -248,7 +251,7 @@ impl TryFrom<&mut Map<String, Value>> for PlayArgs {
 
     fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
         let id: u32 =
-            serde_json::from_value(args.remove("id").ok_or(anyhow!("key `ids` not found"))?)?;
+            serde_json::from_value(args.remove("id").ok_or(anyhow!("key `id` not found"))?)?;
 
         Ok(Self(id))
     }
@@ -284,7 +287,6 @@ impl TryFrom<&str> for RequestKind {
         let kind = match kind.as_str() {
             "ls" => RequestKind::Db(Db::Ls(map.try_into()?)),
             "metadata" => RequestKind::Db(Db::Metadata(map.try_into()?)),
-            "reset" => RequestKind::Db(Db::Reset),
             "select" => RequestKind::Db(Db::Select(map.try_into()?)),
             "unique" => RequestKind::Db(Db::Unique(map.try_into()?)),
             "update" => RequestKind::Db(Db::Update),

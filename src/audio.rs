@@ -6,6 +6,7 @@ use cpal::{
 use crossbeam_channel::{self as cbeam_chan};
 use std::{
     collections::HashMap,
+    path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
 use tokio::sync::{
@@ -57,25 +58,28 @@ impl Audio {
         }
     }
 
-    pub fn play(&mut self, song_proxy: SongProxy) -> Result<()> {
+    pub fn play(&mut self, path: &Path) -> Result<()> {
         let volume = Arc::clone(&self.playback.volume);
         let speed = Arc::clone(&self.playback.speed);
         let (tx_request, rx_request) = crossbeam_channel::unbounded();
+        // activate enabled devices
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.play(self.tx_event.clone())?;
         }
+        // create proxies of active devices for the decoder
         let device_proxies: Vec<_> = self
             .devices
             .values()
             .filter_map(DeviceProxy::try_new)
             .collect();
         if device_proxies.is_empty() {
-            bail!("playback error (all audio devices are disabled)");
+            bail!("all audio devices are disabled");
         }
+        // stop the current decoder instance (if it exists)
         if let Some(tx_request) = &self.tx_request {
             let _ = tx_request.send(DecoderRequest::Stop);
         }
-        let mut decoder = Decoder::try_new(song_proxy, device_proxies, self.playback.gapless)?;
+        let mut decoder = Decoder::try_new(path, device_proxies, self.playback.gapless)?;
         tokio::task::spawn_blocking(move || {
             if let Err(e) = decoder.run(rx_request, volume, speed) {
                 log::error!("decoder error ({})", e);

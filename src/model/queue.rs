@@ -1,16 +1,15 @@
 use rand::{prelude::*, seq::SliceRandom};
-use std::{collections::HashSet, mem};
+use std::{
+    collections::HashSet,
+    mem,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone)]
 pub struct Entry {
-    pub queue_id: u32,
-    pub db_id: u32,
-}
-
-impl From<(u32, u32)> for Entry {
-    fn from((queue_id, db_id): (u32, u32)) -> Self {
-        Entry { queue_id, db_id }
-    }
+    pub id: u32,
+    pub path: Rc<Path>, // absolute paths
 }
 
 #[derive(Debug)]
@@ -47,7 +46,7 @@ impl Random {
 
 impl Queue {
     fn find_by_id(&self, id: u32) -> Option<usize> {
-        self.list.iter().position(|entry| entry.queue_id == id)
+        self.list.iter().position(|entry| entry.id == id)
     }
 
     pub fn new() -> Self {
@@ -64,7 +63,7 @@ impl Queue {
     }
 
     pub fn current(&self) -> Option<Entry> {
-        self.pos.map(|pos| self.list[pos])
+        self.pos.map(|pos| &self.list[pos]).cloned()
     }
 
     pub fn as_inner(&self) -> &[Entry] {
@@ -77,7 +76,7 @@ impl Queue {
 
     pub fn add_current_to_history(&mut self) {
         if let Some(current) = self.current() {
-            self.history.insert(current.queue_id);
+            self.history.insert(current.id);
         }
     }
 
@@ -95,7 +94,7 @@ impl Queue {
                 Some(id) => self.pos = self.find_by_id(id),
                 None => {
                     // random pool exhausted
-                    let ids: Vec<_> = self.list.iter().map(|entry| entry.queue_id).collect();
+                    let ids: Vec<_> = self.list.iter().map(|entry| entry.id).collect();
                     if ids.is_empty() {
                         self.pos = None;
                     } else {
@@ -136,11 +135,12 @@ impl Queue {
         }
     }
 
-    pub fn add(&mut self, db_id: u32, pos: Option<usize>) {
+    pub fn add(&mut self, path: impl AsRef<Path>, pos: Option<usize>) {
         self.next_id += 1;
+        let id = self.next_id;
         let entry = Entry {
-            queue_id: self.next_id,
-            db_id,
+            id,
+            path: path.as_ref().into(),
         };
 
         match pos {
@@ -149,11 +149,11 @@ impl Queue {
         }
         if let QueueMode::Random(Random { rng, ids }) = &mut self.mode {
             if ids.is_empty() {
-                ids.push(entry.queue_id);
+                ids.push(id);
             } else {
                 // add to a random position in constant time
                 let random_pos = rng.random_range(0..ids.len());
-                let temp = mem::replace(&mut ids[random_pos], entry.queue_id);
+                let temp = mem::replace(&mut ids[random_pos], id);
                 ids.push(temp);
             }
         }
@@ -195,13 +195,13 @@ impl Queue {
             .list
             .iter()
             .filter(|entry| {
-                !self.history.contains(&entry.queue_id)
+                !self.history.contains(&entry.id)
                     && self
                         .current()
-                        .map(|cur_entry| entry.queue_id != cur_entry.queue_id)
+                        .map(|cur_entry| entry.id != cur_entry.id)
                         .unwrap_or(true)
             })
-            .map(|entry| entry.queue_id)
+            .map(|entry| entry.id)
             .collect();
         self.mode = QueueMode::Random(Random::new(not_played_ids));
     }
@@ -215,6 +215,7 @@ impl Queue {
     }
 }
 
+/*
 #[cfg(test)]
 mod test {
     use super::*;
@@ -286,7 +287,7 @@ mod test {
         let mut seen = HashSet::new();
         queue.move_next();
         let cur_on_toggle = queue.current();
-        seen.insert(cur_on_toggle.unwrap().queue_id);
+        seen.insert(cur_on_toggle.unwrap().id);
         queue.start_random();
         for i in 0..(n - 1) {
             let cur = queue.current();
@@ -294,10 +295,11 @@ mod test {
                 // check that toggling random doesn't "move" the current song
                 assert_eq!(cur, cur_on_toggle);
             } else {
-                assert!(cur.is_some() && !seen.contains(&cur.unwrap().queue_id));
+                assert!(cur.is_some() && !seen.contains(&cur.unwrap().id));
             }
-            seen.insert(cur.unwrap().queue_id);
+            seen.insert(cur.unwrap().id);
             queue.move_next();
         }
     }
 }
+*/

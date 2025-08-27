@@ -1,5 +1,6 @@
 use anyhow::{Result, bail};
 use serde_json::Map;
+use std::path::{Path, PathBuf};
 use tokio::sync::{
     mpsc::{self as tokio_chan},
     oneshot,
@@ -26,28 +27,10 @@ struct Player {
 }
 
 impl Player {
-    fn song_by_db_id(&self, db_id: u32) -> Result<SongProxy> {
-        let Some(song) = self.database.song_by_id(db_id) else {
-            bail!(format!(
-                "song with id `{}` not found in the database",
-                db_id
-            ));
-        };
-
-        Ok(song)
-    }
-
-    fn play(&mut self, db_id: u32) -> Result<()> {
-        self.queue.add_current_to_history();
-        let song_proxy = self.song_by_db_id(db_id)?;
-        self.audio.play(song_proxy)?;
-
-        Ok(())
-    }
-
     fn move_next_until_playable(&mut self) {
+        self.queue.add_current_to_history();
         while let Some(entry) = self.queue.move_next() {
-            match self.play(entry.db_id) {
+            match self.audio.play(&entry.path) {
                 Ok(_) => break,
                 Err(e) => log::error!("playback error ({})", e),
             }
@@ -56,7 +39,7 @@ impl Player {
 
     fn move_prev_until_playable(&mut self) {
         while let Some(entry) = self.queue.move_prev() {
-            match self.play(entry.db_id) {
+            match self.audio.play(&entry.path) {
                 Ok(_) => break,
                 Err(e) => log::error!("playback error ({})", e),
             }
@@ -74,11 +57,6 @@ impl Player {
                 let response = match req {
                     DbRequestKind::Ls(args) => self.database.ls(args),
                     DbRequestKind::Metadata(args) => self.database.metadata(args),
-                    DbRequestKind::Reset => {
-                        self.queue.clear();
-                        self.audio.stop();
-                        self.database.reset()
-                    }
                     DbRequestKind::Select(args) => self.database.select(args),
                     DbRequestKind::Unique(args) => self.database.unique(args),
                     DbRequestKind::Update => self.database.update(),
@@ -170,18 +148,25 @@ impl Player {
 
         match req {
             QueueRequestKind::Add(args) => {
-                let AddArgs(db_ids, insert_pos) = args;
-                for (offset, db_id) in db_ids.into_iter().enumerate() {
-                    match self.song_by_db_id(db_id) {
-                        Ok(_) => match insert_pos {
-                            Some(pos) => self.queue.add(db_id, Some(pos + offset)),
-                            None => self.queue.add(db_id, None),
+                let AddArgs(paths, insert_pos) = args;
+                let mut not_found = Vec::new();
+                for (offset, path) in paths.into_iter().enumerate() {
+                    match self.database.try_to_abs_path(&path) {
+                        Some(abs_path) => match insert_pos {
+                            Some(pos) => self.queue.add(&abs_path, Some(pos + offset)),
+                            None => self.queue.add(&abs_path, None),
                         },
-                        Err(e) => return Response::new_err(e.to_string()),
+                        None => {
+                            not_found.push(path.to_string_lossy().into_owned());
+                        }
                     }
                 }
 
-                Response::new_ok()
+                if not_found.is_empty() {
+                    Response::new_ok()
+                } else {
+                    Response::new_err(format!("file(s) `{}` not found", not_found.join(",")))
+                }
             }
             QueueRequestKind::Clear => {
                 self.queue.clear();
@@ -198,13 +183,17 @@ impl Player {
                 Response::new_ok()
             }
             QueueRequestKind::Play(args) => {
-                let PlayArgs(queue_id) = args;
-                match self.queue.move_to(queue_id) {
-                    Some(entry) => self.play(entry.db_id).into(),
-                    None => Response::new_err(format!(
-                        "song with id `{}` not found in the queue",
-                        queue_id
-                    )),
+                let PlayArgs(id) = args;
+                match self.queue.move_to(id) {
+                    Some(entry) => {
+                        let res = self.audio.play(&entry.path);
+                        if res.is_err() {
+                            self.queue.reset_pos();
+                            self.audio.stop();
+                        }
+                        res.into()
+                    }
+                    None => Response::new_err(format!("song with queue id `{}` not found", id)),
                 }
             }
             QueueRequestKind::Previous => {
@@ -245,7 +234,20 @@ impl Player {
 
         match req {
             StatusRequestKind::Queue => {
-                Response::new_ok().with_item("queue", &self.queue.as_inner())
+                let queue: Vec<_> = self
+                    .queue
+                    .as_inner()
+                    .iter()
+                    .map(|entry| {
+                        let mut map = Map::new();
+                        map.insert("id".into(), entry.id.into());
+                        map.insert("path".into(), entry.path.to_string_lossy().into());
+
+                        map
+                    })
+                    .collect();
+
+                Response::new_ok().with_item("queue", &queue)
             }
             StatusRequestKind::State => {
                 let mut response = Response::new_ok()
@@ -261,8 +263,8 @@ impl Player {
                 }
                 if let Some(current) = self.queue.current() {
                     response = response
-                        .with_item("db_id", &current.db_id)
-                        .with_item("queue_id", &current.queue_id);
+                        .with_item("id", &current.id)
+                        .with_item("path", &current.path.to_string_lossy());
                 }
 
                 response
@@ -339,7 +341,7 @@ pub async fn run(
     let database = {
         let (tx, rx) = oneshot::channel();
         rayon::spawn(move || {
-            let _ = tx.send(Database::from_dir(&music_dir, &allowed_exts));
+            let _ = tx.send(Database::from_dir(music_dir, &allowed_exts));
         });
         rx.await?
     }?;

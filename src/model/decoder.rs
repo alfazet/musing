@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow, bail};
 use crossbeam_channel::{self as cbeam_chan, TryRecvError};
 use std::{
     io,
+    path::Path,
     sync::{Arc, RwLock},
 };
 use symphonia::core::{
@@ -16,7 +17,7 @@ use tokio::sync::oneshot;
 use crate::model::{
     device::{BaseSample, DeviceProxy},
     resampler::Resampler,
-    song::SongProxy,
+    song::{self, SongProxy},
 };
 
 const BASE_SAMPLE_MIN: BaseSample = -1.0;
@@ -107,15 +108,11 @@ pub struct Decoder {
 }
 
 impl Decoder {
-    pub fn try_new(
-        song_proxy: SongProxy,
-        device_proxies: Vec<DeviceProxy>,
-        gapless: bool,
-    ) -> Result<Self> {
-        let demuxer = song_proxy.demuxer(gapless)?;
+    pub fn try_new(path: &Path, device_proxies: Vec<DeviceProxy>, gapless: bool) -> Result<Self> {
+        let demuxer = song::demuxer(&path, gapless)?;
         let track = demuxer.default_track().ok_or(anyhow!(
             "no audio track found in `{}`",
-            song_proxy.path.to_string_lossy()
+            path.to_string_lossy()
         ))?;
         let track_id = track.id;
         let decoder_opts: SymphoniaDecoderOptions = Default::default();

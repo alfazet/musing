@@ -13,18 +13,19 @@ use symphonia::core::{
 
 use crate::model::tag_key::TagKey;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Metadata {
     data: HashMap<TagKey, String>,
 }
 
+#[derive(Clone)]
 pub struct Song {
-    pub path: PathBuf, // relative path
+    pub path: PathBuf, // absolute path
     pub metadata: Metadata,
 }
 
 pub struct SongProxy {
-    pub path: PathBuf, // relative path
+    pub path: PathBuf, // absolute path
 }
 
 #[derive(Debug)]
@@ -58,9 +59,8 @@ impl Metadata {
 }
 
 impl Song {
-    pub fn try_new(music_dir: &Path, rel_path: &Path) -> Result<Self> {
-        let abs_path = music_dir.join(rel_path);
-        let mut probe_res = song_utils::get_probe_result(&abs_path, false)?;
+    pub fn try_new(path: impl AsRef<Path> + Into<PathBuf>) -> Result<Self> {
+        let mut probe_res = song_utils::get_probe_result(&path, false)?;
         let metadata_container = probe_res
             .format
             .metadata()
@@ -73,7 +73,7 @@ impl Song {
             .map(|m| m.current().map(Metadata::from).unwrap_or_default())
             .unwrap_or_default();
         let song = Self {
-            path: rel_path.to_path_buf(),
+            path: path.into(),
             metadata: metadata_container.merge(metadata_probe),
         };
 
@@ -93,13 +93,18 @@ impl SongProxy {
     }
 }
 
+pub fn demuxer(path: &Path, gapless: bool) -> Result<Box<dyn FormatReader>> {
+    let probe_res = song_utils::get_probe_result(path, gapless)?;
+    Ok(probe_res.format)
+}
+
 mod song_utils {
     use super::*;
 
-    pub fn get_probe_result(path: &Path, enable_gapless: bool) -> Result<ProbeResult> {
-        let source = Box::new(File::open(path)?);
+    pub fn get_probe_result(path: impl AsRef<Path>, enable_gapless: bool) -> Result<ProbeResult> {
+        let source = Box::new(File::open(path.as_ref())?);
         let mut hint = Hint::new();
-        if let Some(ext) = path.extension()
+        if let Some(ext) = path.as_ref().extension()
             && let Some(ext) = ext.to_str()
         {
             hint.with_extension(ext);

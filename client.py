@@ -17,9 +17,9 @@ while True:
         dir = input("dir: ").strip()
         msg = json.dumps({"kind": "ls", "dir": dir})
     elif kind == "metadata":
-        ids = list(map(int, input("ids: ").strip().split(",")))
+        paths = input("paths: ").strip().split(",")
         tags = input("tags: ").strip().split(",")
-        msg = json.dumps({"kind": "metadata", "ids": ids, "tags": tags})
+        msg = json.dumps({"kind": "metadata", "paths": paths, "tags": tags})
     elif kind == "select":
         n_filters = int(input("n_filters: ").strip())
         filters = []
@@ -57,9 +57,9 @@ while True:
             }
         )
     elif kind == "add":
-        ids = list(map(int, input("ids: ").strip().split(",")))
+        paths = input("paths: ").strip().split(",")
         pos = int(input("pos: ").strip())
-        request = {"kind": "add", "ids": ids}
+        request = {"kind": "add", "paths": paths}
         if pos >= 0:
             request["pos"] = pos
         msg = json.dumps(request)
@@ -114,6 +114,8 @@ while True:
     n = len(msg_bytes)
     s.sendall(n.to_bytes(4, "big"))
     s.sendall(msg_bytes)
-    response_len = int.from_bytes(s.recv(4), "big")
-    response = s.recv(response_len)
+    expected_len = int.from_bytes(s.recv(4), "big")
+    response = bytearray()
+    while len(response) < expected_len:
+        response.extend(s.recv(expected_len))
     print(json.loads(response))
