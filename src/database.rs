@@ -5,8 +5,7 @@ use serde_json::Map;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    fs::{self, File},
-    hash::{DefaultHasher, Hash, Hasher},
+    fs::File,
     io::{BufReader, prelude::*},
     iter::{FromIterator, IntoIterator, Iterator},
     path::{Path, PathBuf},
@@ -18,7 +17,7 @@ use crate::{
     model::{
         request::{LsArgs, MetadataArgs, SelectArgs, UniqueArgs},
         response::Response,
-        song::{Metadata, Song, SongProxy},
+        song::{Metadata, Song},
     },
 };
 
@@ -59,7 +58,7 @@ impl Database {
         music_dir: impl AsRef<Path> + Into<PathBuf>,
         allowed_exts: &[String],
     ) -> Result<Self> {
-        let files = db_utils::walk_dir(music_dir.as_ref(), SystemTime::UNIX_EPOCH, &allowed_exts)?;
+        let files = db_utils::walk_dir(music_dir.as_ref(), SystemTime::UNIX_EPOCH, allowed_exts)?;
         let data_rows = Self::to_data_rows(&files);
         let last_update = SystemTime::now();
 
@@ -73,7 +72,7 @@ impl Database {
 
     // tries to find the song by the given (relative or absolute) path
     pub fn try_to_abs_path(&self, path: impl AsRef<Path>) -> Option<PathBuf> {
-        let abs_path = db_utils::to_abs_path(&self.music_dir, &path.as_ref());
+        let abs_path = db_utils::to_abs_path(&self.music_dir, path.as_ref());
         db_utils::binary_search_by_path(&self.data_rows, &abs_path).map(|_| abs_path)
     }
 
@@ -323,11 +322,9 @@ mod db_utils {
         let mut ignored = HashSet::new();
         if let Ok(file) = File::open(root_dir.as_ref().join(constants::DEFAULT_IGNORE_FILE)) {
             let stream = BufReader::new(file);
-            for line in stream.lines() {
-                if let Ok(line) = &line {
-                    let abs_path = db_utils::to_abs_path(&root_dir, Path::new(line));
-                    ignored.insert(abs_path);
-                }
+            for line in stream.lines().map_while(Result::ok) {
+                let abs_path = db_utils::to_abs_path(&root_dir, Path::new(&line));
+                ignored.insert(abs_path);
             }
         }
         let list = WalkDir::new(root_dir)
@@ -362,6 +359,8 @@ mod test {
 
     #[test]
     fn walk_dir_with_ignore() {
+        use std::fs;
+
         let tmp = std::env::temp_dir();
         let dir = tmp.join(format!(
             "musing_test_{}",
@@ -374,15 +373,15 @@ mod test {
         let n = 10;
         let _ = fs::create_dir(&dir);
         for i in 1..=n {
-            let _ = File::create(&dir.join(format!("song{}.xyz", i)));
+            let _ = File::create(dir.join(format!("song{}.xyz", i)));
         }
         let _ = fs::create_dir(dir.join("ok_dir"));
         for i in 1..=n {
-            let _ = File::create(&dir.join(format!("ok_dir/song_ok{}.xyz", i)));
+            let _ = File::create(dir.join(format!("ok_dir/song_ok{}.xyz", i)));
         }
         let _ = fs::create_dir(dir.join("bad_dir"));
         for i in 1..=n {
-            let _ = File::create(&dir.join(format!("bad_dir/song_bad{}.xyz", i)));
+            let _ = File::create(dir.join(format!("bad_dir/song_bad{}.xyz", i)));
         }
 
         let mut ignore = File::create(dir.join(constants::DEFAULT_IGNORE_FILE)).unwrap();

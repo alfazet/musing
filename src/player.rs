@@ -1,6 +1,6 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use serde_json::Map;
-use std::path::{Path, PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 use tokio::sync::{
     mpsc::{self as tokio_chan},
     oneshot,
@@ -11,19 +11,21 @@ use crate::{
     config::PlayerConfig,
     database::Database,
     model::{
+        playlist::Playlist,
         queue::Queue,
         request::{self, Request, RequestKind},
         response::Response,
-        song::{SongEvent, SongProxy},
+        song::SongEvent,
     },
 };
 
 struct Player {
-    queue: Queue,
-    database: Database,
     audio: Audio,
-    rx_request: tokio_chan::UnboundedReceiver<Request>,
+    database: Database,
+    playlists: HashMap<PathBuf, Playlist>,
+    queue: Queue,
     rx_event: tokio_chan::UnboundedReceiver<SongEvent>,
+    rx_request: tokio_chan::UnboundedReceiver<Request>,
 }
 
 impl Player {
@@ -44,6 +46,28 @@ impl Player {
                 Err(e) => log::error!("playback error ({})", e),
             }
         }
+    }
+
+    // returns songs which couldn't be found
+    fn add_to_queue<'a>(
+        &mut self,
+        paths: &'a [PathBuf],
+        insert_pos: Option<usize>,
+    ) -> Vec<&'a PathBuf> {
+        let mut not_found = Vec::new();
+        for (offset, path) in paths.iter().enumerate() {
+            match self.database.try_to_abs_path(path) {
+                Some(abs_path) => match insert_pos {
+                    Some(pos) => self.queue.add(&abs_path, Some(pos + offset)),
+                    None => self.queue.add(&abs_path, None),
+                },
+                None => {
+                    not_found.push(path);
+                }
+            }
+        }
+
+        not_found
     }
 
     // database requests are blocking and (mostly) parallelizable,
@@ -69,18 +93,18 @@ impl Player {
     }
 
     fn device_request(&mut self, req: request::DeviceRequestKind) -> Response {
-        use request::{DeviceRequestKind, DisableArgs, EnableArgs};
+        use request::{DeviceRequestKind, DisableEnableArgs};
 
         match req {
             DeviceRequestKind::Disable(args) => {
-                let DisableArgs(device) = args;
+                let DisableEnableArgs(device) = args;
                 self.audio.disable_device(device).into()
             }
             DeviceRequestKind::Enable(args) => {
-                let EnableArgs(device) = args;
+                let DisableEnableArgs(device) = args;
                 self.audio.enable_device(&device).into()
             }
-            DeviceRequestKind::ListDevices => {
+            DeviceRequestKind::Devices => {
                 let devices: Vec<_> = self
                     .audio
                     .list_devices()
@@ -143,29 +167,70 @@ impl Player {
         }
     }
 
-    fn queue_request(&mut self, req: request::QueueRequestKind) -> Response {
-        use request::{AddArgs, PlayArgs, QueueRequestKind, RemoveArgs};
+    fn playlist_request(&mut self, req: request::PlaylistRequestKind) -> Response {
+        use request::{FromFileArgs, LoadArgs, PlaylistRequestKind};
 
         match req {
-            QueueRequestKind::Add(args) => {
-                let AddArgs(paths, insert_pos) = args;
-                let mut not_found = Vec::new();
-                for (offset, path) in paths.into_iter().enumerate() {
-                    match self.database.try_to_abs_path(&path) {
-                        Some(abs_path) => match insert_pos {
-                            Some(pos) => self.queue.add(&abs_path, Some(pos + offset)),
-                            None => self.queue.add(&abs_path, None),
-                        },
-                        None => {
-                            not_found.push(path.to_string_lossy().into_owned());
+            PlaylistRequestKind::FromFile(args) => {
+                let FromFileArgs(path) = args;
+                let playlist = Playlist::try_new(&path);
+                match playlist {
+                    Ok(playlist) => {
+                        self.playlists.insert(path, playlist);
+                        Response::new_ok()
+                    }
+                    Err(e) => Response::new_err(e.to_string()),
+                }
+            }
+            PlaylistRequestKind::Load(args) => {
+                let LoadArgs(path, pos) = args;
+                match self.playlists.get(&path) {
+                    Some(playlist) => {
+                        let paths = &playlist.inner();
+                        let not_found = self.add_to_queue(paths, pos);
+
+                        if not_found.is_empty() {
+                            Response::new_ok()
+                        } else {
+                            Response::new_err(format!(
+                                "file(s) `{}` not found in the database",
+                                not_found
+                                    .into_iter()
+                                    .map(|p| p.to_string_lossy().into_owned())
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            ))
                         }
                     }
+                    None => Response::new_err(format!(
+                        "playlist `{}` not found",
+                        path.to_string_lossy()
+                    )),
                 }
+            }
+            _ => todo!(),
+        }
+    }
+
+    fn queue_request(&mut self, req: request::QueueRequestKind) -> Response {
+        use request::{AddToQueueArgs, PlayArgs, QueueRequestKind, RemoveFromQueueArgs};
+
+        match req {
+            QueueRequestKind::AddToQueue(args) => {
+                let AddToQueueArgs(paths, pos) = args;
+                let not_found = self.add_to_queue(&paths, pos);
 
                 if not_found.is_empty() {
                     Response::new_ok()
                 } else {
-                    Response::new_err(format!("file(s) `{}` not found", not_found.join(",")))
+                    Response::new_err(format!(
+                        "file(s) `{}` not found in the database",
+                        not_found
+                            .into_iter()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    ))
                 }
             }
             QueueRequestKind::Clear => {
@@ -208,8 +273,8 @@ impl Player {
                 self.queue.start_random();
                 Response::new_ok()
             }
-            QueueRequestKind::Remove(args) => {
-                let RemoveArgs(queue_ids) = args;
+            QueueRequestKind::RemoveFromQueue(args) => {
+                let RemoveFromQueueArgs(queue_ids) = args;
                 for queue_id in queue_ids {
                     if self.queue.remove(queue_id) {
                         self.audio.stop();
@@ -233,10 +298,12 @@ impl Player {
         use request::StatusRequestKind;
 
         match req {
+            StatusRequestKind::Playlists => Response::new_ok()
+                .with_item("playlists", &self.playlists.keys().collect::<Vec<_>>()),
             StatusRequestKind::Queue => {
                 let queue: Vec<_> = self
                     .queue
-                    .as_inner()
+                    .inner()
                     .iter()
                     .map(|entry| {
                         let mut map = Map::new();
@@ -277,23 +344,25 @@ impl Player {
             RequestKind::Db(req) => self.db_request(req).await,
             RequestKind::Device(req) => self.device_request(req),
             RequestKind::Playback(req) => self.playback_request(req).await,
+            RequestKind::Playlist(req) => self.playlist_request(req),
             RequestKind::Queue(req) => self.queue_request(req),
             RequestKind::Status(req) => self.status_request(req).await,
         }
     }
 
     pub fn new(
-        database: Database,
         audio: Audio,
-        rx_request: tokio_chan::UnboundedReceiver<Request>,
+        database: Database,
         rx_event: tokio_chan::UnboundedReceiver<SongEvent>,
+        rx_request: tokio_chan::UnboundedReceiver<Request>,
     ) -> Self {
         Self {
-            queue: Queue::new(),
-            database,
             audio,
-            rx_request,
+            database,
+            playlists: HashMap::new(),
+            queue: Queue::new(),
             rx_event,
+            rx_request,
         }
     }
 
@@ -345,7 +414,9 @@ pub async fn run(
         });
         rx.await?
     }?;
-    let mut player = Player::new(database, audio, rx_request, rx_event);
+    // TODO: recreate the queue from a state file
+    // TODO: add playlists from the `playlists` dir
+    let mut player = Player::new(audio, database, rx_event, rx_request);
 
     player.run().await
 }

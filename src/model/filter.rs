@@ -18,14 +18,6 @@ struct RegexFilter {
     regex: Regex,
 }
 
-// matches iff edit distance between
-// the tag value and the pattern is <= dist
-struct FuzzyFilter {
-    tag: TagKey,
-    pattern: String,
-    dist: u32,
-}
-
 impl FilterExpr {
     pub fn evaluate(&self, song: &Song) -> bool {
         self.0.iter().all(|filter| filter.matches(song))
@@ -38,14 +30,6 @@ impl Filter for RegexFilter {
             Some(value) => self.regex.is_match(&unidecode(value)),
             None => false,
         }
-    }
-}
-
-// TODO: true if edit_dist <= filter.dist
-// case insensitive
-impl Filter for FuzzyFilter {
-    fn matches(&self, _: &Song) -> bool {
-        true
     }
 }
 

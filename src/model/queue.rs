@@ -75,7 +75,7 @@ impl Queue {
         self.pos.map(|pos| &self.list[pos]).cloned()
     }
 
-    pub fn as_inner(&self) -> &[Entry] {
+    pub fn inner(&self) -> &[Entry] {
         &self.list
     }
 
@@ -241,7 +241,7 @@ mod test {
             (4, "d".into()).into(),
             (3, "c".into()).into(),
         ];
-        assert_eq!(queue.as_inner(), expected);
+        assert_eq!(queue.inner(), expected);
 
         queue.remove(4);
         queue.remove(2137);
@@ -254,7 +254,7 @@ mod test {
             (3, "c".into()).into(),
             (5, "e".into()).into(),
         ];
-        assert_eq!(queue.as_inner(), expected);
+        assert_eq!(queue.inner(), expected);
     }
 
     #[test]

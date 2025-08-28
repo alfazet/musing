@@ -56,16 +56,16 @@ while True:
                 "group_by": group_by,
             }
         )
-    elif kind == "add":
+    elif kind == "addqueue":
         paths = input("paths: ").strip().split(";")
         pos = int(input("pos: ").strip())
-        request = {"kind": "add", "paths": paths}
+        request = {"kind": "addqueue", "paths": paths}
         if pos >= 0:
             request["pos"] = pos
         msg = json.dumps(request)
-    elif kind == "remove":
+    elif kind == "removequeue":
         ids = list(map(int, input("ids: ").strip().split(";")))
-        msg = json.dumps({"kind": "remove", "ids": ids})
+        msg = json.dumps({"kind": "removequeue", "ids": ids})
     elif kind == "play":
         id = int(input("id: ").strip())
         msg = json.dumps({"kind": "play", "id": id})
@@ -84,6 +84,16 @@ while True:
     elif kind in ("disable", "enable"):
         device = input("device: ").strip()
         msg = json.dumps({"kind": kind, "device": device})
+    elif kind == "fromfile":
+        path = input("path: ").strip()
+        msg = json.dumps({"kind": "fromfile", "path": path})
+    elif kind == "load":
+        playlist = input("playlist: ").strip()
+        pos = int(input("pos: ").strip())
+        request = {"kind": "load", "playlist": playlist}
+        if pos >= 0:
+            request["pos"] = pos
+        msg = json.dumps(request)
     elif kind in (
         "previous",
         "next",
@@ -98,12 +108,13 @@ while True:
         "single",
         "current",
         "elapsed",
+        "playlists",
         "queue",
         "state",
         "reset",
         "update",
         "volume",
-        "listdev",
+        "devices",
     ):
         msg = json.dumps({"kind": kind})
     else:

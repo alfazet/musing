@@ -22,12 +22,11 @@ pub enum DbRequestKind {
     Update,
 }
 
-pub struct DisableArgs(pub String);
-pub struct EnableArgs(pub String);
+pub struct DisableEnableArgs(pub String);
 pub enum DeviceRequestKind {
-    Disable(DisableArgs),
-    Enable(EnableArgs),
-    ListDevices,
+    Disable(DisableEnableArgs),
+    Enable(DisableEnableArgs),
+    Devices,
 }
 
 pub struct ChangeVolumeArgs(pub i8);
@@ -46,22 +45,35 @@ pub enum PlaybackRequestKind {
     Toggle,
 }
 
-pub struct AddArgs(pub Vec<PathBuf>, pub Option<usize>); // relative or absolute paths
+pub struct AddToPlaylistArgs(pub PathBuf, pub PathBuf); // playlist, song
+pub struct FromFileArgs(pub PathBuf); // absolute path
+pub struct LoadArgs(pub PathBuf, pub Option<usize>);
+pub struct SaveArgs(pub PathBuf);
+pub enum PlaylistRequestKind {
+    AddToPlaylist(AddToPlaylistArgs),
+    FromFile(FromFileArgs),
+    Load(LoadArgs),
+    // RemoveFromPlaylist(RemoveFromPlaylistArgs),
+    Save(SaveArgs),
+}
+
+pub struct AddToQueueArgs(pub Vec<PathBuf>, pub Option<usize>); // relative or absolute paths
 pub struct PlayArgs(pub u32); // queue id
-pub struct RemoveArgs(pub Vec<u32>); // queue ids
+pub struct RemoveFromQueueArgs(pub Vec<u32>); // queue ids
 pub enum QueueRequestKind {
-    Add(AddArgs),
+    AddToQueue(AddToQueueArgs),
     Clear,
     Next,
     Play(PlayArgs),
     Previous,
     Random,
-    Remove(RemoveArgs),
+    RemoveFromQueue(RemoveFromQueueArgs),
     Sequential,
     Single,
 }
 
 pub enum StatusRequestKind {
+    Playlists,
     Queue,
     State,
 }
@@ -70,6 +82,7 @@ pub enum RequestKind {
     Db(DbRequestKind),
     Device(DeviceRequestKind),
     Playback(PlaybackRequestKind),
+    Playlist(PlaylistRequestKind),
     Queue(QueueRequestKind),
     Status(StatusRequestKind),
 }
@@ -154,20 +167,7 @@ impl TryFrom<&mut Map<String, Value>> for UniqueArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for DisableArgs {
-    type Error = anyhow::Error;
-
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
-        let device: String = serde_json::from_value(
-            args.remove("device")
-                .ok_or(anyhow!("key `device` not found"))?,
-        )?;
-
-        Ok(Self(device))
-    }
-}
-
-impl TryFrom<&mut Map<String, Value>> for EnableArgs {
+impl TryFrom<&mut Map<String, Value>> for DisableEnableArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
@@ -232,7 +232,47 @@ impl TryFrom<&mut Map<String, Value>> for SpeedArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for AddArgs {
+impl TryFrom<&mut Map<String, Value>> for AddToPlaylistArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let playlist: PathBuf = serde_json::from_value(
+            args.remove("playlist")
+                .ok_or(anyhow!("key `playlist` not found"))?,
+        )?;
+        let song: PathBuf =
+            serde_json::from_value(args.remove("song").ok_or(anyhow!("key `song` not found"))?)?;
+
+        Ok(Self(playlist, song))
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for FromFileArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let path: PathBuf =
+            serde_json::from_value(args.remove("path").ok_or(anyhow!("key `path` not found"))?)?;
+
+        Ok(Self(path))
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for LoadArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let playlist: PathBuf = serde_json::from_value(
+            args.remove("playlist")
+                .ok_or(anyhow!("key `playlist` not found"))?,
+        )?;
+        let pos = args.remove("pos").map(serde_json::from_value).transpose()?;
+
+        Ok(Self(playlist, pos))
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for AddToQueueArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
@@ -257,7 +297,7 @@ impl TryFrom<&mut Map<String, Value>> for PlayArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for RemoveArgs {
+impl TryFrom<&mut Map<String, Value>> for RemoveFromQueueArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
@@ -275,6 +315,7 @@ impl TryFrom<&str> for RequestKind {
         use DbRequestKind as Db;
         use DeviceRequestKind as Device;
         use PlaybackRequestKind as Playback;
+        use PlaylistRequestKind as Playlist;
         use QueueRequestKind as Queue;
         use StatusRequestKind as Status;
 
@@ -293,7 +334,7 @@ impl TryFrom<&str> for RequestKind {
 
             "disable" => RequestKind::Device(Device::Disable(map.try_into()?)),
             "enable" => RequestKind::Device(Device::Enable(map.try_into()?)),
-            "listdev" => RequestKind::Device(Device::ListDevices),
+            "devices" => RequestKind::Device(Device::Devices),
 
             "changevol" => RequestKind::Playback(Playback::ChangeVolume(map.try_into()?)),
             "gapless" => RequestKind::Playback(Playback::Gapless),
@@ -305,16 +346,22 @@ impl TryFrom<&str> for RequestKind {
             "stop" => RequestKind::Playback(Playback::Stop),
             "toggle" => RequestKind::Playback(Playback::Toggle),
 
-            "add" => RequestKind::Queue(Queue::Add(map.try_into()?)),
+            // "addplaylist" => RequestKind::AddToPlaylist(Playlist::AddToPlaylist(map.try_into()?)),
+            "fromfile" => RequestKind::Playlist(Playlist::FromFile(map.try_into()?)),
+            "load" => RequestKind::Playlist(Playlist::Load(map.try_into()?)),
+            // "removeplaylist" => RequestKind::Playlist(Playlist::RemoveFromPlaylist(map.try_into()?)),
+            // "save" => RequestKind::Playlist(Playlist::Save(map.try_into()?)),
+            "addqueue" => RequestKind::Queue(Queue::AddToQueue(map.try_into()?)),
             "clear" => RequestKind::Queue(Queue::Clear),
             "next" => RequestKind::Queue(Queue::Next),
             "play" => RequestKind::Queue(Queue::Play(map.try_into()?)),
             "previous" => RequestKind::Queue(Queue::Previous),
             "random" => RequestKind::Queue(Queue::Random),
-            "remove" => RequestKind::Queue(Queue::Remove(map.try_into()?)),
+            "removequeue" => RequestKind::Queue(Queue::RemoveFromQueue(map.try_into()?)),
             "sequential" => RequestKind::Queue(Queue::Sequential),
             "single" => RequestKind::Queue(Queue::Single),
 
+            "playlists" => RequestKind::Status(Status::Playlists),
             "queue" => RequestKind::Status(Status::Queue),
             "state" => RequestKind::Status(Status::State),
 

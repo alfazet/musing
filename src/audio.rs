@@ -6,7 +6,7 @@ use cpal::{
 use crossbeam_channel::{self as cbeam_chan};
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, RwLock},
 };
 use tokio::sync::{
@@ -19,7 +19,7 @@ use crate::{
     model::{
         decoder::{Decoder, DecoderRequest, PlaybackTimer, Seek, Speed, Volume},
         device::{Device, DeviceProxy},
-        song::{SongEvent, SongProxy},
+        song::SongEvent,
     },
 };
 

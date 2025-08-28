@@ -24,10 +24,6 @@ pub struct Song {
     pub metadata: Metadata,
 }
 
-pub struct SongProxy {
-    pub path: PathBuf, // absolute path
-}
-
 #[derive(Debug)]
 pub enum SongEvent {
     Over,
@@ -83,13 +79,6 @@ impl Song {
     // TODO: base64 encode
     pub fn get_cover_art(&self) -> Option<Vec<u8>> {
         None
-    }
-}
-
-impl SongProxy {
-    pub fn demuxer(&self, gapless: bool) -> Result<Box<dyn FormatReader>> {
-        let probe_res = song_utils::get_probe_result(&self.path, gapless)?;
-        Ok(probe_res.format)
     }
 }
 

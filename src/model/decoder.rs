@@ -17,7 +17,7 @@ use tokio::sync::oneshot;
 use crate::model::{
     device::{BaseSample, DeviceProxy},
     resampler::Resampler,
-    song::{self, SongProxy},
+    song,
 };
 
 const BASE_SAMPLE_MIN: BaseSample = -1.0;
@@ -109,7 +109,7 @@ pub struct Decoder {
 
 impl Decoder {
     pub fn try_new(path: &Path, device_proxies: Vec<DeviceProxy>, gapless: bool) -> Result<Self> {
-        let demuxer = song::demuxer(&path, gapless)?;
+        let demuxer = song::demuxer(path, gapless)?;
         let track = demuxer.default_track().ok_or(anyhow!(
             "no audio track found in `{}`",
             path.to_string_lossy()
