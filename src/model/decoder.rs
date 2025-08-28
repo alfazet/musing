@@ -108,11 +108,15 @@ pub struct Decoder {
 }
 
 impl Decoder {
-    pub fn try_new(path: &Path, device_proxies: Vec<DeviceProxy>, gapless: bool) -> Result<Self> {
-        let demuxer = song::demuxer(path, gapless)?;
+    pub fn try_new(
+        path: impl AsRef<Path>,
+        device_proxies: Vec<DeviceProxy>,
+        gapless: bool,
+    ) -> Result<Self> {
+        let demuxer = song::demuxer(&path, gapless)?;
         let track = demuxer.default_track().ok_or(anyhow!(
             "no audio track found in `{}`",
-            path.to_string_lossy()
+            path.as_ref().to_string_lossy()
         ))?;
         let track_id = track.id;
         let decoder_opts: SymphoniaDecoderOptions = Default::default();

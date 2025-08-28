@@ -346,7 +346,7 @@ impl TryFrom<&str> for RequestKind {
             "stop" => RequestKind::Playback(Playback::Stop),
             "toggle" => RequestKind::Playback(Playback::Toggle),
 
-            // "addplaylist" => RequestKind::AddToPlaylist(Playlist::AddToPlaylist(map.try_into()?)),
+            "addplaylist" => RequestKind::Playlist(Playlist::AddToPlaylist(map.try_into()?)),
             "fromfile" => RequestKind::Playlist(Playlist::FromFile(map.try_into()?)),
             "load" => RequestKind::Playlist(Playlist::Load(map.try_into()?)),
             // "removeplaylist" => RequestKind::Playlist(Playlist::RemoveFromPlaylist(map.try_into()?)),

@@ -82,7 +82,7 @@ impl Song {
     }
 }
 
-pub fn demuxer(path: &Path, gapless: bool) -> Result<Box<dyn FormatReader>> {
+pub fn demuxer(path: impl AsRef<Path>, gapless: bool) -> Result<Box<dyn FormatReader>> {
     let probe_res = song_utils::get_probe_result(path, gapless)?;
     Ok(probe_res.format)
 }

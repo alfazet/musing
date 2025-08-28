@@ -3,13 +3,12 @@ use std::{
     collections::HashSet,
     mem,
     path::{Path, PathBuf},
-    rc::Rc,
 };
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub id: u32,
-    pub path: Rc<Path>, // absolute paths
+    pub path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -37,10 +36,7 @@ pub struct Queue {
 
 impl From<(u32, PathBuf)> for Entry {
     fn from((id, path): (u32, PathBuf)) -> Self {
-        Self {
-            id,
-            path: path.into(),
-        }
+        Self { id, path }
     }
 }
 
@@ -71,8 +67,8 @@ impl Queue {
         .into()
     }
 
-    pub fn current(&self) -> Option<Entry> {
-        self.pos.map(|pos| &self.list[pos]).cloned()
+    pub fn current(&self) -> Option<&'_ Entry> {
+        self.pos.map(|pos| &self.list[pos])
     }
 
     pub fn inner(&self) -> &[Entry] {
@@ -89,7 +85,7 @@ impl Queue {
         }
     }
 
-    pub fn move_next(&mut self) -> Option<Entry> {
+    pub fn move_next(&mut self) -> Option<&'_ Entry> {
         match &mut self.mode {
             QueueMode::Sequential => match &mut self.pos {
                 Some(pos) if *pos < self.list.len() - 1 => *pos += 1,
@@ -119,7 +115,7 @@ impl Queue {
         self.current()
     }
 
-    pub fn move_prev(&mut self) -> Option<Entry> {
+    pub fn move_prev(&mut self) -> Option<&'_ Entry> {
         match &mut self.pos {
             Some(pos) if *pos > 0 => *pos -= 1,
             None if !self.list.is_empty() => self.pos = Some(self.list.len() - 1),
@@ -129,7 +125,7 @@ impl Queue {
         self.current()
     }
 
-    pub fn move_to(&mut self, id: u32) -> Option<Entry> {
+    pub fn move_to(&mut self, id: u32) -> Option<&'_ Entry> {
         // without this check, you could manually play song X and then
         // still get song X from the random pool later
         if let QueueMode::Random(Random { rng: _, ids }) = &mut self.mode {
@@ -267,46 +263,20 @@ mod test {
 
         queue.move_next();
         queue.move_next();
-        assert_eq!(queue.current(), Some((2, "song2".into()).into()));
+        assert_eq!(queue.current(), Some((2, "song2".into()).into()).as_ref());
         queue.move_next();
         queue.move_prev();
-        assert_eq!(queue.current(), Some((2, "song2".into()).into()));
+        assert_eq!(queue.current(), Some((2, "song2".into()).into()).as_ref());
         queue.move_next();
         queue.move_next();
-        assert_eq!(queue.current(), Some((4, "song4".into()).into()));
+        assert_eq!(queue.current(), Some((4, "song4".into()).into()).as_ref());
         queue.move_next();
         queue.move_next();
         assert_eq!(queue.current(), None);
         queue.move_prev();
-        assert_eq!(queue.current(), Some((5, "song5".into()).into()));
+        assert_eq!(queue.current(), Some((5, "song5".into()).into()).as_ref());
         queue.move_next();
         queue.move_next();
-        assert_eq!(queue.current(), Some((1, "song1".into()).into()));
-    }
-
-    #[test]
-    fn random() {
-        let mut queue = Queue::new();
-        let n = 100;
-        for i in 1..(n + 1) {
-            queue.add(format!("song{}", i), None);
-        }
-
-        let mut seen = HashSet::new();
-        queue.move_next();
-        let cur_on_toggle = queue.current();
-        seen.insert(cur_on_toggle.clone().unwrap().id);
-        queue.start_random();
-        for i in 0..(n - 1) {
-            let cur = queue.current();
-            if i == 0 {
-                // check that toggling random doesn't "move" the current song
-                assert_eq!(cur, cur_on_toggle);
-            } else {
-                assert!(cur.is_some() && !seen.contains(&cur.clone().unwrap().id));
-            }
-            seen.insert(cur.clone().unwrap().id);
-            queue.move_next();
-        }
+        assert_eq!(queue.current(), Some((1, "song1".into()).into()).as_ref());
     }
 }

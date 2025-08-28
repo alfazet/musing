@@ -94,6 +94,10 @@ while True:
         if pos >= 0:
             request["pos"] = pos
         msg = json.dumps(request)
+    elif kind == "addplaylist":
+        playlist = input("playlist: ").strip()
+        song = input("song: ").strip()
+        msg = json.dumps({"kind": "addplaylist", "playlist": playlist, "song": song})
     elif kind in (
         "previous",
         "next",

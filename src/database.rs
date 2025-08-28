@@ -5,7 +5,7 @@ use serde_json::Map;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    fs::File,
+    fs::{File, OpenOptions},
     io::{BufReader, prelude::*},
     iter::{FromIterator, IntoIterator, Iterator},
     path::{Path, PathBuf},
@@ -15,6 +15,7 @@ use std::{
 use crate::{
     constants,
     model::{
+        playlist::Playlist,
         request::{LsArgs, MetadataArgs, SelectArgs, UniqueArgs},
         response::Response,
         song::{Metadata, Song},
@@ -29,8 +30,10 @@ struct DataRow {
 
 pub struct Database {
     music_dir: PathBuf,
-    allowed_exts: Vec<String>,
+    playlist_dir: PathBuf,
+    allowed_exts: HashSet<String>,
     data_rows: Vec<DataRow>,
+    playlists: HashMap<PathBuf, Playlist>,
     last_update: SystemTime,
 }
 
@@ -54,18 +57,44 @@ impl Database {
         rows
     }
 
-    pub fn from_dir(
+    fn build_playlists(
+        playlist_dir: impl AsRef<Path> + Into<PathBuf>,
+    ) -> HashMap<PathBuf, Playlist> {
+        let playlist_files = db_utils::walk_dir(
+            playlist_dir.as_ref(),
+            SystemTime::UNIX_EPOCH,
+            &constants::DEFAULT_PLAYLIST_EXTS
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect::<HashSet<_>>(),
+        )
+        .unwrap_or_default();
+
+        playlist_files
+            .into_iter()
+            .filter_map(|path| match Playlist::try_new(&path) {
+                Ok(playlist) => Some((path, playlist)),
+                Err(_) => None,
+            })
+            .collect()
+    }
+
+    pub fn try_new(
         music_dir: impl AsRef<Path> + Into<PathBuf>,
-        allowed_exts: &[String],
+        playlist_dir: impl AsRef<Path> + Into<PathBuf>,
+        allowed_exts: HashSet<String>,
     ) -> Result<Self> {
-        let files = db_utils::walk_dir(music_dir.as_ref(), SystemTime::UNIX_EPOCH, allowed_exts)?;
+        let files = db_utils::walk_dir(music_dir.as_ref(), SystemTime::UNIX_EPOCH, &allowed_exts)?;
         let data_rows = Self::to_data_rows(&files);
+        let playlists = Self::build_playlists(playlist_dir.as_ref());
         let last_update = SystemTime::now();
 
         Ok(Self {
             music_dir: music_dir.into(),
-            allowed_exts: allowed_exts.to_vec(),
+            playlist_dir: playlist_dir.into(),
+            allowed_exts,
             data_rows,
+            playlists,
             last_update,
         })
     }
@@ -74,6 +103,54 @@ impl Database {
     pub fn try_to_abs_path(&self, path: impl AsRef<Path>) -> Option<PathBuf> {
         let abs_path = db_utils::to_abs_path(&self.music_dir, path.as_ref());
         db_utils::binary_search_by_path(&self.data_rows, &abs_path).map(|_| abs_path)
+    }
+
+    pub fn playlists(&self) -> &'_ HashMap<PathBuf, Playlist> {
+        &self.playlists
+    }
+
+    pub fn add_playlist_from_file(&mut self, path: impl AsRef<Path> + Into<PathBuf>) -> Response {
+        let playlist = match Playlist::try_new(&path) {
+            Ok(playlist) => playlist,
+            Err(e) => return Response::new_err(e.to_string()),
+        };
+        self.playlists.insert(path.into(), playlist);
+
+        Response::new_ok()
+    }
+
+    pub fn add_to_playlist(
+        &mut self,
+        playlist_path: impl AsRef<Path>,
+        song_path: impl AsRef<Path> + Into<PathBuf>,
+    ) -> Response {
+        let Some(abs_song_path) = self.try_to_abs_path(&song_path) else {
+            return Response::new_err(format!(
+                "song `{}` not found in the database",
+                &song_path.as_ref().to_string_lossy()
+            ));
+        };
+        // this unwrap is fine because we know that the path is absolute and
+        // points to somewhere within the music_dir
+        let rel_path = abs_song_path.strip_prefix(&self.music_dir).unwrap();
+        if let Some(playlist) = self.playlists.get_mut::<Path>(playlist_path.as_ref()) {
+            // add the relative path because it's cross-platform
+            playlist.append(rel_path);
+        }
+        let Ok(mut playlist_file) = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&playlist_path)
+        else {
+            return Response::new_err(format!(
+                "playlist `{}` not found",
+                playlist_path.as_ref().to_string_lossy()
+            ));
+        };
+
+        writeln!(playlist_file, "{}", rel_path.to_string_lossy())
+            .map_err(|e| e.into())
+            .into()
     }
 
     // get paths of songs located in `path`
@@ -202,7 +279,11 @@ impl Database {
             .and_then(|m| m.modified())
             && ignore_mod_time >= self.last_update
         {
-            return match Self::from_dir(&self.music_dir, &self.allowed_exts) {
+            return match Self::try_new(
+                &self.music_dir,
+                &self.playlist_dir,
+                self.allowed_exts.clone(),
+            ) {
                 Ok(db) => {
                     let n_removed = self.data_rows.len();
                     *self = db;
@@ -238,7 +319,7 @@ impl Database {
             };
         let mut added_data_rows = Self::to_data_rows(&added_songs);
         added_data_rows.par_sort_unstable_by(|lhs, rhs| lhs.song.path.cmp(&rhs.song.path));
-        // merge old rows with new ones without destroying the order
+        // merge old rows with new ones while keeping the sorted order
         let mut new_data_rows = Vec::with_capacity(self.data_rows.len() + added_data_rows.len());
         {
             let mut drain_old = self.data_rows.drain(..).peekable();
@@ -260,6 +341,7 @@ impl Database {
             }
         }
         self.data_rows = new_data_rows;
+        self.playlists = Self::build_playlists(&self.playlist_dir);
         self.last_update = SystemTime::now();
 
         Response::new_ok()
@@ -300,11 +382,11 @@ mod db_utils {
     pub fn walk_dir(
         root_dir: impl AsRef<Path>,
         timestamp: SystemTime,
-        allowed_exts: &[String],
+        allowed_exts: &HashSet<String>,
     ) -> Result<Vec<PathBuf>> {
         let is_ok = move |path: &Path| -> bool {
             if let Some(ext) = path.extension().and_then(|ext| ext.to_str())
-                && allowed_exts.iter().any(|allowed_ext| allowed_ext == ext)
+                && allowed_exts.contains(ext)
                 && let Ok(creation_time) = path.metadata().and_then(|m| m.created())
             {
                 return creation_time >= timestamp;
@@ -386,7 +468,8 @@ mod test {
 
         let mut ignore = File::create(dir.join(constants::DEFAULT_IGNORE_FILE)).unwrap();
         let _ = ignore.write_all(b"bad_dir");
-        let res = db_utils::walk_dir(&dir, SystemTime::UNIX_EPOCH, &["xyz".into()]).unwrap();
+        let res = db_utils::walk_dir(&dir, SystemTime::UNIX_EPOCH, &HashSet::from(["xyz".into()]))
+            .unwrap();
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(res.len(), 20);
         assert!(

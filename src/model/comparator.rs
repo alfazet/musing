@@ -58,7 +58,12 @@ impl TryFrom<Value> for Comparator {
 }
 
 impl Comparator {
-    fn cmp_values(&self, lhs: &str, rhs: &str) -> Ordering {
+    fn cmp_values<S, T>(&self, lhs: S, rhs: T) -> Ordering
+    where
+        S: AsRef<str>,
+        T: AsRef<str>,
+    {
+        let (lhs, rhs) = (lhs.as_ref(), rhs.as_ref());
         match self.tag.kind {
             TagKeyKind::String => lhs.cmp(rhs),
             TagKeyKind::Integer => {

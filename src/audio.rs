@@ -58,7 +58,7 @@ impl Audio {
         }
     }
 
-    pub fn play(&mut self, path: &Path) -> Result<()> {
+    pub fn play(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let volume = Arc::clone(&self.playback.volume);
         let speed = Arc::clone(&self.playback.speed);
         let (tx_request, rx_request) = crossbeam_channel::unbounded();
@@ -111,7 +111,11 @@ impl Audio {
         Ok(self)
     }
 
-    fn add_device(&mut self, cpal_device: CpalDevice, name: &str) -> Result<()> {
+    fn add_device(
+        &mut self,
+        cpal_device: CpalDevice,
+        name: impl AsRef<str> + Into<String>,
+    ) -> Result<()> {
         let device = Device::try_from(cpal_device)?;
         self.devices.insert(name.into(), device);
 
@@ -137,8 +141,8 @@ impl Audio {
         res
     }
 
-    pub fn enable_device(&mut self, device_name: &str) -> Result<()> {
-        let res = match self.devices.get_mut(device_name) {
+    pub fn enable_device(&mut self, device_name: impl AsRef<str>) -> Result<()> {
+        let res = match self.devices.get_mut(device_name.as_ref()) {
             Some(device) => match self.playback.state {
                 PlaybackState::Stopped => device.enable(None),
                 _ => {
@@ -153,7 +157,7 @@ impl Audio {
                     res
                 }
             },
-            None => bail!(format!("device {} not found", device_name)),
+            None => bail!(format!("device {} not found", device_name.as_ref())),
         };
         if let Ok(new_enabled) = res
             && new_enabled
@@ -309,17 +313,17 @@ mod audio_utils {
         host.default_output_device()
     }
 
-    pub fn device_by_name(device_name: &str) -> Result<CpalDevice> {
+    pub fn device_by_name(device_name: impl AsRef<str>) -> Result<CpalDevice> {
         let host = cpal::default_host();
         match host
             .output_devices()?
-            .find(|x| x.name().map(|s| s == device_name).unwrap_or(false))
+            .find(|x| x.name().map(|s| s == device_name.as_ref()).unwrap_or(false))
         {
             Some(device) => Ok(device),
             None => {
                 let mut err_msg = format!(
                     "audio device `{}` unavailable, available devices: ",
-                    device_name
+                    device_name.as_ref()
                 );
                 for name in host
                     .output_devices()?
