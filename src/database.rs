@@ -5,8 +5,8 @@ use serde_json::Map;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    fs::{File, OpenOptions},
-    io::{BufReader, prelude::*},
+    fs::{self, File, OpenOptions},
+    io::{BufReader, BufWriter, prelude::*},
     iter::{FromIterator, IntoIterator, Iterator},
     path::{Path, PathBuf},
     time::SystemTime,
@@ -16,6 +16,7 @@ use crate::{
     constants,
     model::{
         playlist::Playlist,
+        queue::Entry,
         request::{LsArgs, MetadataArgs, SelectArgs, UniqueArgs},
         response::Response,
         song::{Metadata, Song},
@@ -33,7 +34,7 @@ pub struct Database {
     playlist_dir: PathBuf,
     allowed_exts: HashSet<String>,
     data_rows: Vec<DataRow>,
-    playlists: HashMap<PathBuf, Playlist>,
+    playlists: HashMap<PathBuf, Playlist>, // keys are absolute paths
     last_update: SystemTime,
 }
 
@@ -105,16 +106,22 @@ impl Database {
         db_utils::binary_search_by_path(&self.data_rows, &abs_path).map(|_| abs_path)
     }
 
-    pub fn playlists(&self) -> &'_ HashMap<PathBuf, Playlist> {
+    pub fn playlists(&self) -> &HashMap<PathBuf, Playlist> {
         &self.playlists
     }
 
+    pub fn load_playlist(&self, path: impl AsRef<Path>) -> Option<&Playlist> {
+        let abs_path = db_utils::to_abs_path(&self.playlist_dir, path.as_ref());
+        self.playlists.get(&abs_path)
+    }
+
     pub fn add_playlist_from_file(&mut self, path: impl AsRef<Path> + Into<PathBuf>) -> Response {
-        let playlist = match Playlist::try_new(&path) {
+        let abs_path = db_utils::to_abs_path(&self.playlist_dir, path.as_ref());
+        let playlist = match Playlist::try_new(&abs_path) {
             Ok(playlist) => playlist,
             Err(e) => return Response::new_err(e.to_string()),
         };
-        self.playlists.insert(path.into(), playlist);
+        self.playlists.insert(abs_path, playlist);
 
         Response::new_ok()
     }
@@ -130,27 +137,89 @@ impl Database {
                 &song_path.as_ref().to_string_lossy()
             ));
         };
+        let abs_playlist_path = db_utils::to_abs_path(&self.playlist_dir, playlist_path.as_ref());
         // this unwrap is fine because we know that the path is absolute and
         // points to somewhere within the music_dir
-        let rel_path = abs_song_path.strip_prefix(&self.music_dir).unwrap();
-        if let Some(playlist) = self.playlists.get_mut::<Path>(playlist_path.as_ref()) {
+        let rel_song_path = abs_song_path.strip_prefix(&self.music_dir).unwrap();
+        if let Some(playlist) = self.playlists.get_mut::<Path>(abs_playlist_path.as_ref()) {
             // add the relative path because it's cross-platform
-            playlist.append(rel_path);
+            playlist.append(rel_song_path);
         }
         let Ok(mut playlist_file) = OpenOptions::new()
             .append(true)
             .create(true)
-            .open(&playlist_path)
+            .open(&abs_playlist_path)
         else {
             return Response::new_err(format!(
                 "playlist `{}` not found",
-                playlist_path.as_ref().to_string_lossy()
+                abs_playlist_path.to_string_lossy()
             ));
         };
 
-        writeln!(playlist_file, "{}", rel_path.to_string_lossy())
+        playlist_file
+            .write_all(rel_song_path.as_os_str().as_encoded_bytes())
+            .and_then(|_| playlist_file.write_all(b"\n"))
             .map_err(|e| e.into())
             .into()
+    }
+
+    pub fn remove_from_playlist(
+        &mut self,
+        playlist_path: impl AsRef<Path>,
+        pos: usize,
+    ) -> Response {
+        let abs_playlist_path = db_utils::to_abs_path(&self.playlist_dir, playlist_path.as_ref());
+        let Ok(content) = fs::read_to_string(&abs_playlist_path) else {
+            return Response::new_err(format!(
+                "playlist `{}` not found",
+                abs_playlist_path.to_string_lossy()
+            ));
+        };
+        if let Some(playlist) = self.playlists.get_mut::<Path>(abs_playlist_path.as_ref()) {
+            if !playlist.remove(pos - 1) {
+                return Response::new_err(format!(
+                    "playlist `{}` has fewer than {} entries",
+                    abs_playlist_path.to_string_lossy(),
+                    pos
+                ));
+            }
+        }
+        let new_content = content
+            .lines()
+            .enumerate()
+            .filter_map(|(i, line)| if i + 1 != pos { Some(line) } else { None })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+
+        fs::write(&abs_playlist_path, new_content)
+            .map_err(|e| e.into())
+            .into()
+    }
+
+    pub fn save_as_playlist(&self, path: impl AsRef<Path>, entries: &[Entry]) -> Response {
+        let abs_path = db_utils::to_abs_path(&self.playlist_dir, path.as_ref());
+        let Ok(file) = File::create(&abs_path) else {
+            return Response::new_err(format!(
+                "couldn't open file `{}`",
+                abs_path.to_string_lossy()
+            ));
+        };
+        let mut stream = BufWriter::new(file);
+        for entry in entries {
+            // this unwrap is fine because we know that the path is absolute and
+            // points to somewhere within the music_dir
+            let rel_path = entry.path.strip_prefix(&self.music_dir).unwrap();
+            if let Err(e) = stream
+                .write_all(rel_path.as_os_str().as_encoded_bytes())
+                .and_then(|_| stream.write_all(b"\n"))
+            {
+                return Response::new_err(e.to_string());
+            }
+        }
+        let _ = stream.flush();
+
+        Response::new_ok()
     }
 
     // get paths of songs located in `path`

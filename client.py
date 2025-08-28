@@ -87,6 +87,13 @@ while True:
     elif kind == "fromfile":
         path = input("path: ").strip()
         msg = json.dumps({"kind": "fromfile", "path": path})
+    elif kind == "save":
+        path = input("path: ").strip()
+        msg = json.dumps({"kind": "save", "path": path})
+    elif kind == "removeplaylist":
+        path = input("path: ").strip()
+        pos = int(input("pos: ").strip())
+        msg = json.dumps({"kind": "removeplaylist", "path": path, "pos": pos})
     elif kind == "load":
         playlist = input("playlist: ").strip()
         pos = int(input("pos: ").strip())

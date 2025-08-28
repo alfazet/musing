@@ -67,7 +67,7 @@ impl Queue {
         .into()
     }
 
-    pub fn current(&self) -> Option<&'_ Entry> {
+    pub fn current(&self) -> Option<&Entry> {
         self.pos.map(|pos| &self.list[pos])
     }
 
@@ -85,7 +85,7 @@ impl Queue {
         }
     }
 
-    pub fn move_next(&mut self) -> Option<&'_ Entry> {
+    pub fn move_next(&mut self) -> Option<&Entry> {
         match &mut self.mode {
             QueueMode::Sequential => match &mut self.pos {
                 Some(pos) if *pos < self.list.len() - 1 => *pos += 1,
@@ -115,7 +115,7 @@ impl Queue {
         self.current()
     }
 
-    pub fn move_prev(&mut self) -> Option<&'_ Entry> {
+    pub fn move_prev(&mut self) -> Option<&Entry> {
         match &mut self.pos {
             Some(pos) if *pos > 0 => *pos -= 1,
             None if !self.list.is_empty() => self.pos = Some(self.list.len() - 1),
@@ -125,7 +125,7 @@ impl Queue {
         self.current()
     }
 
-    pub fn move_to(&mut self, id: u32) -> Option<&'_ Entry> {
+    pub fn move_to(&mut self, id: u32) -> Option<&Entry> {
         // without this check, you could manually play song X and then
         // still get song X from the random pool later
         if let QueueMode::Random(Random { rng: _, ids }) = &mut self.mode {

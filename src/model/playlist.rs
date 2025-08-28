@@ -29,4 +29,13 @@ impl Playlist {
     pub fn append(&mut self, path: impl Into<PathBuf>) {
         self.0.push(path.into());
     }
+
+    pub fn remove(&mut self, pos: usize) -> bool {
+        if pos < self.0.len() {
+            self.0.remove(pos);
+            return true;
+        }
+
+        false
+    }
 }

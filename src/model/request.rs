@@ -22,10 +22,11 @@ pub enum DbRequestKind {
     Update,
 }
 
-pub struct DisableEnableArgs(pub String);
+pub struct DisableArgs(pub String);
+pub struct EnableArgs(pub String);
 pub enum DeviceRequestKind {
-    Disable(DisableEnableArgs),
-    Enable(DisableEnableArgs),
+    Disable(DisableArgs),
+    Enable(EnableArgs),
     Devices,
 }
 
@@ -48,12 +49,13 @@ pub enum PlaybackRequestKind {
 pub struct AddToPlaylistArgs(pub PathBuf, pub PathBuf); // playlist, song
 pub struct FromFileArgs(pub PathBuf); // absolute path
 pub struct LoadArgs(pub PathBuf, pub Option<usize>);
+pub struct RemoveFromPlaylistArgs(pub PathBuf, pub usize); // playlist, position (1-based)
 pub struct SaveArgs(pub PathBuf);
 pub enum PlaylistRequestKind {
     AddToPlaylist(AddToPlaylistArgs),
     FromFile(FromFileArgs),
     Load(LoadArgs),
-    // RemoveFromPlaylist(RemoveFromPlaylistArgs),
+    RemoveFromPlaylist(RemoveFromPlaylistArgs),
     Save(SaveArgs),
 }
 
@@ -167,7 +169,20 @@ impl TryFrom<&mut Map<String, Value>> for UniqueArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for DisableEnableArgs {
+impl TryFrom<&mut Map<String, Value>> for DisableArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let device: String = serde_json::from_value(
+            args.remove("device")
+                .ok_or(anyhow!("key `device` not found"))?,
+        )?;
+
+        Ok(Self(device))
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for EnableArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
@@ -272,6 +287,30 @@ impl TryFrom<&mut Map<String, Value>> for LoadArgs {
     }
 }
 
+impl TryFrom<&mut Map<String, Value>> for SaveArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let path: PathBuf =
+            serde_json::from_value(args.remove("path").ok_or(anyhow!("key `path` not found"))?)?;
+
+        Ok(Self(path))
+    }
+}
+
+impl TryFrom<&mut Map<String, Value>> for RemoveFromPlaylistArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let path: PathBuf =
+            serde_json::from_value(args.remove("path").ok_or(anyhow!("key `path` not found"))?)?;
+        let pos: usize =
+            serde_json::from_value(args.remove("pos").ok_or(anyhow!("key `pos` not found"))?)?;
+
+        Ok(Self(path, pos))
+    }
+}
+
 impl TryFrom<&mut Map<String, Value>> for AddToQueueArgs {
     type Error = anyhow::Error;
 
@@ -349,8 +388,11 @@ impl TryFrom<&str> for RequestKind {
             "addplaylist" => RequestKind::Playlist(Playlist::AddToPlaylist(map.try_into()?)),
             "fromfile" => RequestKind::Playlist(Playlist::FromFile(map.try_into()?)),
             "load" => RequestKind::Playlist(Playlist::Load(map.try_into()?)),
-            // "removeplaylist" => RequestKind::Playlist(Playlist::RemoveFromPlaylist(map.try_into()?)),
-            // "save" => RequestKind::Playlist(Playlist::Save(map.try_into()?)),
+            "removeplaylist" => {
+                RequestKind::Playlist(Playlist::RemoveFromPlaylist(map.try_into()?))
+            }
+            "save" => RequestKind::Playlist(Playlist::Save(map.try_into()?)),
+
             "addqueue" => RequestKind::Queue(Queue::AddToQueue(map.try_into()?)),
             "clear" => RequestKind::Queue(Queue::Clear),
             "next" => RequestKind::Queue(Queue::Next),

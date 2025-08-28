@@ -50,15 +50,15 @@ impl Player {
     }
 
     fn device_request(&mut self, req: request::DeviceRequestKind) -> Response {
-        use request::{DeviceRequestKind, DisableEnableArgs};
+        use request::{DeviceRequestKind, DisableArgs, EnableArgs};
 
         match req {
             DeviceRequestKind::Disable(args) => {
-                let DisableEnableArgs(device) = args;
+                let DisableArgs(device) = args;
                 self.audio.disable_device(device).into()
             }
             DeviceRequestKind::Enable(args) => {
-                let DisableEnableArgs(device) = args;
+                let EnableArgs(device) = args;
                 self.audio.enable_device(&device).into()
             }
             DeviceRequestKind::Devices => {
@@ -125,7 +125,10 @@ impl Player {
     }
 
     fn playlist_request(&mut self, req: request::PlaylistRequestKind) -> Response {
-        use request::{AddToPlaylistArgs, FromFileArgs, LoadArgs, PlaylistRequestKind};
+        use request::{
+            AddToPlaylistArgs, FromFileArgs, LoadArgs, PlaylistRequestKind, RemoveFromPlaylistArgs,
+            SaveArgs,
+        };
 
         match req {
             PlaylistRequestKind::AddToPlaylist(args) => {
@@ -138,10 +141,10 @@ impl Player {
             }
             PlaylistRequestKind::Load(args) => {
                 let LoadArgs(path, pos) = args;
-                match self.database.playlists().get(&path) {
+                match self.database.load_playlist(&path) {
                     Some(playlist) => {
-                        let paths = &playlist.inner();
-                        let not_found = add_to_queue(&self.database, &mut self.queue, paths, pos);
+                        let not_found =
+                            add_to_queue(&self.database, &mut self.queue, playlist.inner(), pos);
                         if not_found.is_empty() {
                             Response::new_ok()
                         } else {
@@ -161,7 +164,14 @@ impl Player {
                     )),
                 }
             }
-            _ => todo!(),
+            PlaylistRequestKind::RemoveFromPlaylist(args) => {
+                let RemoveFromPlaylistArgs(path, pos) = args;
+                self.database.remove_from_playlist(path, pos)
+            }
+            PlaylistRequestKind::Save(args) => {
+                let SaveArgs(path) = args;
+                self.database.save_as_playlist(path, self.queue.inner())
+            }
         }
     }
 
