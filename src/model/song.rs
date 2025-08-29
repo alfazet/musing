@@ -75,11 +75,6 @@ impl Song {
 
         Ok(song)
     }
-
-    // TODO: base64 encode
-    pub fn get_cover_art(&self) -> Option<Vec<u8>> {
-        None
-    }
 }
 
 pub fn demuxer(path: impl AsRef<Path>, gapless: bool) -> Result<Box<dyn FormatReader>> {

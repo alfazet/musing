@@ -32,7 +32,6 @@ struct DataRow {
 pub struct Database {
     music_dir: PathBuf,
     playlist_dir: PathBuf,
-    allowed_exts: HashSet<String>,
     data_rows: Vec<DataRow>,
     playlists: HashMap<PathBuf, Playlist>, // keys are absolute paths
     last_update: SystemTime,
@@ -64,10 +63,7 @@ impl Database {
         let playlist_files = db_utils::walk_dir(
             playlist_dir.as_ref(),
             SystemTime::UNIX_EPOCH,
-            &constants::DEFAULT_PLAYLIST_EXTS
-                .into_iter()
-                .map(|s| s.to_string())
-                .collect::<HashSet<_>>(),
+            &constants::DEFAULT_PLAYLIST_EXTS,
         )
         .unwrap_or_default();
 
@@ -82,18 +78,24 @@ impl Database {
 
     pub fn try_new(
         music_dir: impl AsRef<Path> + Into<PathBuf>,
-        playlist_dir: impl AsRef<Path> + Into<PathBuf>,
-        allowed_exts: HashSet<String>,
+        playlist_dir: Option<&PathBuf>,
     ) -> Result<Self> {
-        let files = db_utils::walk_dir(music_dir.as_ref(), SystemTime::UNIX_EPOCH, &allowed_exts)?;
+        let files = db_utils::walk_dir(
+            music_dir.as_ref(),
+            SystemTime::UNIX_EPOCH,
+            &constants::DEFAULT_ALLOWED_EXTS,
+        )?;
         let data_rows = Self::to_data_rows(&files);
-        let playlists = Self::build_playlists(playlist_dir.as_ref());
+        let default_playlist_dir = music_dir
+            .as_ref()
+            .join(Path::new(constants::DEFAULT_PLAYLIST_DIR));
+        let playlist_dir = playlist_dir.unwrap_or(&default_playlist_dir);
+        let playlists = Self::build_playlists(playlist_dir);
         let last_update = SystemTime::now();
 
         Ok(Self {
             music_dir: music_dir.into(),
             playlist_dir: playlist_dir.into(),
-            allowed_exts,
             data_rows,
             playlists,
             last_update,
@@ -175,14 +177,14 @@ impl Database {
                 abs_playlist_path.to_string_lossy()
             ));
         };
-        if let Some(playlist) = self.playlists.get_mut::<Path>(abs_playlist_path.as_ref()) {
-            if !playlist.remove(pos - 1) {
-                return Response::new_err(format!(
-                    "playlist `{}` has fewer than {} entries",
-                    abs_playlist_path.to_string_lossy(),
-                    pos
-                ));
-            }
+        if let Some(playlist) = self.playlists.get_mut::<Path>(abs_playlist_path.as_ref())
+            && !playlist.remove(pos - 1)
+        {
+            return Response::new_err(format!(
+                "playlist `{}` has fewer than {} entries",
+                abs_playlist_path.to_string_lossy(),
+                pos
+            ));
         }
         let new_content = content
             .lines()
@@ -348,11 +350,7 @@ impl Database {
             .and_then(|m| m.modified())
             && ignore_mod_time >= self.last_update
         {
-            return match Self::try_new(
-                &self.music_dir,
-                &self.playlist_dir,
-                self.allowed_exts.clone(),
-            ) {
+            return match Self::try_new(&self.music_dir, Some(&self.playlist_dir)) {
                 Ok(db) => {
                     let n_removed = self.data_rows.len();
                     *self = db;
@@ -381,11 +379,14 @@ impl Database {
         self.data_rows.retain(|row| !row.pending_delete);
         let n_removed = old_len - self.data_rows.len();
 
-        let added_songs =
-            match db_utils::walk_dir(&self.music_dir, self.last_update, &self.allowed_exts) {
-                Ok(added_songs) => added_songs,
-                Err(e) => return Response::new_err(e.to_string()),
-            };
+        let added_songs = match db_utils::walk_dir(
+            &self.music_dir,
+            self.last_update,
+            &constants::DEFAULT_ALLOWED_EXTS,
+        ) {
+            Ok(added_songs) => added_songs,
+            Err(e) => return Response::new_err(e.to_string()),
+        };
         let mut added_data_rows = Self::to_data_rows(&added_songs);
         added_data_rows.par_sort_unstable_by(|lhs, rhs| lhs.song.path.cmp(&rhs.song.path));
         // merge old rows with new ones while keeping the sorted order

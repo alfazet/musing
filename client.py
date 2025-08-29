@@ -90,14 +90,21 @@ while True:
     elif kind == "save":
         path = input("path: ").strip()
         msg = json.dumps({"kind": "save", "path": path})
+    elif kind == "listsongs":
+        playlist = input("playlist: ").strip()
+        msg = json.dumps({"kind": "listsongs", "playlist": playlist})
     elif kind == "removeplaylist":
         path = input("path: ").strip()
         pos = int(input("pos: ").strip())
         msg = json.dumps({"kind": "removeplaylist", "path": path, "pos": pos})
     elif kind == "load":
         playlist = input("playlist: ").strip()
+        range_l = int(input("range_l: ").strip())
+        range_r = int(input("range_r: ").strip())
         pos = int(input("pos: ").strip())
         request = {"kind": "load", "playlist": playlist}
+        if range_l >= 0 and range_r >= 0:
+            request["range"] = [range_l, range_r]
         if pos >= 0:
             request["pos"] = pos
         msg = json.dumps(request)

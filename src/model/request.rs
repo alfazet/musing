@@ -47,13 +47,16 @@ pub enum PlaybackRequestKind {
 }
 
 pub struct AddToPlaylistArgs(pub PathBuf, pub PathBuf); // playlist, song
-pub struct FromFileArgs(pub PathBuf); // absolute path
-pub struct LoadArgs(pub PathBuf, pub Option<usize>);
-pub struct RemoveFromPlaylistArgs(pub PathBuf, pub usize); // playlist, position (1-based)
+pub struct FromFileArgs(pub PathBuf);
+pub struct ListSongsArgs(pub PathBuf);
+// playlist, range (inclusive), position
+pub struct LoadArgs(pub PathBuf, pub Option<(usize, usize)>, pub Option<usize>);
+pub struct RemoveFromPlaylistArgs(pub PathBuf, pub usize); // playlist, position
 pub struct SaveArgs(pub PathBuf);
 pub enum PlaylistRequestKind {
     AddToPlaylist(AddToPlaylistArgs),
     FromFile(FromFileArgs),
+    ListSongs(ListSongsArgs),
     Load(LoadArgs),
     RemoveFromPlaylist(RemoveFromPlaylistArgs),
     Save(SaveArgs),
@@ -273,6 +276,19 @@ impl TryFrom<&mut Map<String, Value>> for FromFileArgs {
     }
 }
 
+impl TryFrom<&mut Map<String, Value>> for ListSongsArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+        let playlist: PathBuf = serde_json::from_value(
+            args.remove("playlist")
+                .ok_or(anyhow!("key `playlist` not found"))?,
+        )?;
+
+        Ok(Self(playlist))
+    }
+}
+
 impl TryFrom<&mut Map<String, Value>> for LoadArgs {
     type Error = anyhow::Error;
 
@@ -281,9 +297,13 @@ impl TryFrom<&mut Map<String, Value>> for LoadArgs {
             args.remove("playlist")
                 .ok_or(anyhow!("key `playlist` not found"))?,
         )?;
+        let range = args
+            .remove("range")
+            .map(serde_json::from_value)
+            .transpose()?;
         let pos = args.remove("pos").map(serde_json::from_value).transpose()?;
 
-        Ok(Self(playlist, pos))
+        Ok(Self(playlist, range, pos))
     }
 }
 
@@ -302,12 +322,14 @@ impl TryFrom<&mut Map<String, Value>> for RemoveFromPlaylistArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
-        let path: PathBuf =
-            serde_json::from_value(args.remove("path").ok_or(anyhow!("key `path` not found"))?)?;
+        let playlist: PathBuf = serde_json::from_value(
+            args.remove("playlist")
+                .ok_or(anyhow!("key `playlist` not found"))?,
+        )?;
         let pos: usize =
             serde_json::from_value(args.remove("pos").ok_or(anyhow!("key `pos` not found"))?)?;
 
-        Ok(Self(path, pos))
+        Ok(Self(playlist, pos))
     }
 }
 
@@ -387,6 +409,7 @@ impl TryFrom<&str> for RequestKind {
 
             "addplaylist" => RequestKind::Playlist(Playlist::AddToPlaylist(map.try_into()?)),
             "fromfile" => RequestKind::Playlist(Playlist::FromFile(map.try_into()?)),
+            "listsongs" => RequestKind::Playlist(Playlist::ListSongs(map.try_into()?)),
             "load" => RequestKind::Playlist(Playlist::Load(map.try_into()?)),
             "removeplaylist" => {
                 RequestKind::Playlist(Playlist::RemoveFromPlaylist(map.try_into()?))

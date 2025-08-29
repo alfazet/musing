@@ -126,8 +126,8 @@ impl Player {
 
     fn playlist_request(&mut self, req: request::PlaylistRequestKind) -> Response {
         use request::{
-            AddToPlaylistArgs, FromFileArgs, LoadArgs, PlaylistRequestKind, RemoveFromPlaylistArgs,
-            SaveArgs,
+            AddToPlaylistArgs, FromFileArgs, ListSongsArgs, LoadArgs, PlaylistRequestKind,
+            RemoveFromPlaylistArgs, SaveArgs,
         };
 
         match req {
@@ -139,12 +139,27 @@ impl Player {
                 let FromFileArgs(path) = args;
                 self.database.add_playlist_from_file(path)
             }
+            PlaylistRequestKind::ListSongs(args) => {
+                let ListSongsArgs(path) = args;
+                match self.database.load_playlist(&path) {
+                    Some(playlist) => Response::new_ok().with_item("songs", &playlist.inner()),
+                    None => Response::new_err(format!(
+                        "playlist `{}` not found",
+                        path.to_string_lossy()
+                    )),
+                }
+            }
             PlaylistRequestKind::Load(args) => {
-                let LoadArgs(path, pos) = args;
+                let LoadArgs(path, range, pos) = args;
                 match self.database.load_playlist(&path) {
                     Some(playlist) => {
-                        let not_found =
-                            add_to_queue(&self.database, &mut self.queue, playlist.inner(), pos);
+                        let not_found = add_to_queue(
+                            &self.database,
+                            &mut self.queue,
+                            playlist.inner(),
+                            range,
+                            pos,
+                        );
                         if not_found.is_empty() {
                             Response::new_ok()
                         } else {
@@ -181,7 +196,7 @@ impl Player {
         match req {
             QueueRequestKind::AddToQueue(args) => {
                 let AddToQueueArgs(paths, pos) = args;
-                let not_found = add_to_queue(&self.database, &mut self.queue, &paths, pos);
+                let not_found = add_to_queue(&self.database, &mut self.queue, &paths, None, pos);
 
                 if not_found.is_empty() {
                     Response::new_ok()
@@ -381,12 +396,22 @@ fn add_to_queue<'a>(
     database: &Database,
     queue: &mut Queue,
     paths: &'a [PathBuf],
-    insert_pos: Option<usize>,
+    range: Option<(usize, usize)>,
+    pos: Option<usize>,
 ) -> Vec<&'a PathBuf> {
     let mut not_found = Vec::new();
-    for (offset, path) in paths.iter().enumerate() {
+    let range = match range {
+        Some((start, end)) => {
+            let start = start.min(paths.len() - 1);
+            let end = end.clamp(start, paths.len() - 1);
+
+            start..=end
+        }
+        None => 0..=(paths.len() - 1),
+    };
+    for (offset, path) in paths[range].iter().enumerate() {
         match database.try_to_abs_path(path) {
-            Some(abs_path) => match insert_pos {
+            Some(abs_path) => match pos {
                 Some(pos) => queue.add(&abs_path, Some(pos + offset)),
                 None => queue.add(&abs_path, None),
             },
@@ -407,7 +432,7 @@ pub async fn run(
         audio_device,
         music_dir,
         playlist_dir,
-        allowed_exts,
+        // allowed_exts,
     } = config;
 
     let (tx_event, rx_event) = tokio_chan::unbounded_channel();
@@ -417,7 +442,7 @@ pub async fn run(
     let database = {
         let (tx, rx) = oneshot::channel();
         rayon::spawn(move || {
-            let _ = tx.send(Database::try_new(music_dir, playlist_dir, allowed_exts));
+            let _ = tx.send(Database::try_new(music_dir, playlist_dir.as_ref()));
         });
         rx.await?
     }?;

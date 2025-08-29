@@ -38,8 +38,8 @@ async fn main() {
     {
         Ok(config) => config,
         Err(e) => {
-            log::error!("config error ({})", e);
-            return;
+            log::error!("config error ({}), falling back to default", e);
+            Config::default()
         }
     };
 

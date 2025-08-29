@@ -1,9 +1,10 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::Parser;
 use std::{
-    collections::HashSet,
+    fs,
     path::{Path, PathBuf},
 };
+use toml::{Table, Value};
 
 use crate::constants;
 
@@ -37,10 +38,6 @@ pub struct CliOptions {
     /// Print logs to stderr (default: false).
     #[arg(long = "stderr")]
     pub log_stderr: bool,
-
-    /// Additional file extensions that musing should treat as music files (default: empty)
-    #[arg(long = "exts")]
-    pub additional_exts: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -52,8 +49,7 @@ pub struct ServerConfig {
 pub struct PlayerConfig {
     pub audio_device: Option<String>,
     pub music_dir: PathBuf,
-    pub playlist_dir: PathBuf,
-    pub allowed_exts: HashSet<String>,
+    pub playlist_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Default)]
@@ -70,58 +66,78 @@ impl Default for ServerConfig {
     }
 }
 
-impl ServerConfig {}
+impl ServerConfig {
+    pub fn try_new(content: impl AsRef<str>) -> Result<Self> {
+        let mut config = Self::default();
+        let table = content.as_ref().parse::<Table>()?;
+        for (key, val) in table {
+            if let ("port", Value::Integer(port)) = (key.as_str(), val) {
+                config.port = port as u16;
+            }
+        }
+
+        Ok(config)
+    }
+}
 
 impl Default for PlayerConfig {
     fn default() -> Self {
-        let music_dir = PathBuf::from(constants::DEFAULT_MUSIC_DIR);
-        let playlist_dir = music_dir.join(Path::new(constants::DEFAULT_PLAYLIST_DIR));
         Self {
             audio_device: None,
-            music_dir,
-            playlist_dir,
-            allowed_exts: HashSet::from(constants::DEFAULT_ALLOWED_EXTS.map(|s| s.to_string())),
+            music_dir: PathBuf::from(constants::DEFAULT_MUSIC_DIR),
+            playlist_dir: None,
         }
     }
 }
 
-impl PlayerConfig {}
+impl PlayerConfig {
+    pub fn try_new(content: impl AsRef<str>) -> Result<Self> {
+        let mut config = Self::default();
+        let table = content.as_ref().parse::<Table>()?;
+        for (key, val) in table {
+            match (key.as_str(), val) {
+                ("audio_device", Value::String(audio_device)) => {
+                    config.audio_device = Some(audio_device);
+                }
+                ("music_dir", Value::String(music_dir)) => {
+                    config.music_dir = music_dir.into();
+                }
+                ("playlist_dir", Value::String(playlist_dir)) => {
+                    config.playlist_dir = Some(playlist_dir.into());
+                }
+                _ => (),
+            }
+        }
+
+        Ok(config)
+    }
+}
 
 impl Config {
-    pub fn from_file(_path: Option<&Path>) -> Result<Self> {
-        // let default_path = dirs::config_dir()
-        //     .unwrap_or(dirs::home_dir().unwrap())
-        //     .join(constants::DEFAULT_CONFIG_FILE);
-        // let path = path.unwrap_or(&default_path);
-        // if path doesn't exist return the default
-        // read the toml file
-        // server_config = ..from_toml_pairs()?
-        // player_config = ditto
-        // Ok(Config { server_config, player_config })
-        Ok(Config::default())
+    pub fn from_file(path: Option<&Path>) -> Result<Self> {
+        let default_path = dirs::config_dir()
+            .ok_or(anyhow!("no config dir found on the system"))?
+            .join(constants::DEFAULT_CONFIG_DIR)
+            .join(constants::DEFAULT_CONFIG_FILE);
+        let path = path.unwrap_or(&default_path);
+        let content = fs::read_to_string(path)?;
+        let server_config = ServerConfig::try_new(&content)?;
+        let player_config = PlayerConfig::try_new(&content)?;
+
+        Ok(Self {
+            server_config,
+            player_config,
+        })
     }
 
     pub fn merge_with_cli(self, cli_opts: CliOptions) -> Self {
         let server_config = ServerConfig {
             port: cli_opts.port.unwrap_or(self.server_config.port),
         };
-        let allowed_exts: HashSet<_> = cli_opts
-            .additional_exts
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-        let allowed_exts: HashSet<_> = allowed_exts
-            .union(&self.player_config.allowed_exts)
-            .map(|s| s.to_string())
-            .collect();
-
         let player_config = PlayerConfig {
-            audio_device: cli_opts.audio_device,
+            audio_device: cli_opts.audio_device.or(self.player_config.audio_device),
             music_dir: cli_opts.music_dir.unwrap_or(self.player_config.music_dir),
-            playlist_dir: cli_opts
-                .playlist_dir
-                .unwrap_or(self.player_config.playlist_dir),
-            allowed_exts,
+            playlist_dir: cli_opts.playlist_dir.or(self.player_config.playlist_dir),
         };
 
         Config {

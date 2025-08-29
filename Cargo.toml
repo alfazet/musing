@@ -24,4 +24,5 @@ simple-logging = "2.0.2"
 symphonia = { version = "0.5.4", features = ["all", "opt-simd"] }
 thiserror = "2.0.12"
 tokio = { version = "1.46.1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }
+toml = "0.9.5"
 unidecode = "0.3.0"

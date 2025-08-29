@@ -140,16 +140,16 @@ impl Queue {
         }
     }
 
-    pub fn add(&mut self, path: impl AsRef<Path>, pos: Option<usize>) {
+    pub fn add(&mut self, path: impl AsRef<Path> + Into<PathBuf>, pos: Option<usize>) {
         self.next_id += 1;
         let id = self.next_id;
         let entry = Entry {
             id,
-            path: path.as_ref().into(),
+            path: path.into(),
         };
 
         match pos {
-            Some(pos) if pos <= self.list.len() => self.list.insert(pos, entry),
+            Some(pos) if pos < self.list.len() => self.list.insert(pos, entry),
             _ => self.list.push(entry),
         }
         if let QueueMode::Random(Random { rng, ids }) = &mut self.mode {
