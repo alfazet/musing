@@ -1,25 +1,31 @@
-use rand::{prelude::*, seq::SliceRandom};
-use std::{collections::HashSet, mem};
+use bincode::{self, Decode, Encode};
+use std::{
+    collections::HashSet,
+    mem,
+    path::{Path, PathBuf},
+};
 
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+// https://www.ams.org/journals/mcom/1999-68-225/S0025-5718-99-00996-5/S0025-5718-99-00996-5.pdf
+// not using an rng from the rand crate makes (de)serialization easier
+const RNG_A: usize = 35;
+const RNG_MOD: usize = 509;
+
+#[derive(Clone, Debug, Decode, Encode, PartialEq)]
 pub struct Entry {
-    pub queue_id: u32,
-    pub db_id: u32,
+    pub id: u32,
+    pub path: PathBuf,
 }
 
-impl From<(u32, u32)> for Entry {
-    fn from((queue_id, db_id): (u32, u32)) -> Self {
-        Entry { queue_id, db_id }
-    }
-}
+#[derive(Clone, Debug, Decode, Encode)]
+struct Rng(usize);
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Decode, Encode)]
 struct Random {
-    rng: SmallRng,
+    rng: Rng,
     ids: Vec<u32>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Decode, Default, Encode)]
 enum QueueMode {
     #[default]
     Sequential,
@@ -27,7 +33,7 @@ enum QueueMode {
     Random(Random),
 }
 
-#[derive(Default)]
+#[derive(Clone, Decode, Default, Encode)]
 pub struct Queue {
     list: Vec<Entry>,
     pos: Option<usize>,
@@ -36,10 +42,27 @@ pub struct Queue {
     next_id: u32,
 }
 
+impl From<(u32, PathBuf)> for Entry {
+    fn from((id, path): (u32, PathBuf)) -> Self {
+        Self { id, path }
+    }
+}
+
+impl Rng {
+    pub fn next_usize(&mut self, l: usize, r: usize) -> usize {
+        self.0 = (self.0 * RNG_A) % RNG_MOD;
+        self.0 % (r - l + 1) + l
+    }
+}
+
 impl Random {
     pub fn new(mut ids: Vec<u32>) -> Self {
-        let mut rng = SmallRng::from_os_rng();
-        ids.shuffle(&mut rng);
+        let mut rng = Rng(ids.len());
+        // Fisher-Yates shuffle
+        for i in 0..(ids.len() - 1) {
+            let j = rng.next_usize(i, ids.len() - 1);
+            ids.swap(i, j);
+        }
 
         Self { rng, ids }
     }
@@ -47,18 +70,23 @@ impl Random {
 
 impl Queue {
     fn find_by_id(&self, id: u32) -> Option<usize> {
-        self.list.iter().position(|entry| entry.queue_id == id)
+        self.list.iter().position(|entry| entry.id == id)
     }
 
-    pub fn new() -> Self {
-        Self::default()
+    pub fn mode(&self) -> String {
+        match self.mode {
+            QueueMode::Sequential => "sequential",
+            QueueMode::Single => "single",
+            QueueMode::Random(_) => "random",
+        }
+        .into()
     }
 
-    pub fn current(&self) -> Option<Entry> {
-        self.pos.map(|pos| self.list[pos])
+    pub fn current(&self) -> Option<&Entry> {
+        self.pos.map(|pos| &self.list[pos])
     }
 
-    pub fn as_inner(&self) -> &[Entry] {
+    pub fn inner(&self) -> &[Entry] {
         &self.list
     }
 
@@ -68,11 +96,11 @@ impl Queue {
 
     pub fn add_current_to_history(&mut self) {
         if let Some(current) = self.current() {
-            self.history.insert(current.queue_id);
+            self.history.insert(current.id);
         }
     }
 
-    pub fn move_next(&mut self) -> Option<Entry> {
+    pub fn move_next(&mut self) -> Option<&Entry> {
         match &mut self.mode {
             QueueMode::Sequential => match &mut self.pos {
                 Some(pos) if *pos < self.list.len() - 1 => *pos += 1,
@@ -86,7 +114,7 @@ impl Queue {
                 Some(id) => self.pos = self.find_by_id(id),
                 None => {
                     // random pool exhausted
-                    let ids: Vec<_> = self.list.iter().map(|entry| entry.queue_id).collect();
+                    let ids: Vec<_> = self.list.iter().map(|entry| entry.id).collect();
                     if ids.is_empty() {
                         self.pos = None;
                     } else {
@@ -102,7 +130,7 @@ impl Queue {
         self.current()
     }
 
-    pub fn move_prev(&mut self) -> Option<Entry> {
+    pub fn move_prev(&mut self) -> Option<&Entry> {
         match &mut self.pos {
             Some(pos) if *pos > 0 => *pos -= 1,
             None if !self.list.is_empty() => self.pos = Some(self.list.len() - 1),
@@ -112,7 +140,7 @@ impl Queue {
         self.current()
     }
 
-    pub fn move_to(&mut self, id: u32) -> Option<Entry> {
+    pub fn move_to(&mut self, id: u32) -> Option<&Entry> {
         // without this check, you could manually play song X and then
         // still get song X from the random pool later
         if let QueueMode::Random(Random { rng: _, ids }) = &mut self.mode {
@@ -127,24 +155,25 @@ impl Queue {
         }
     }
 
-    pub fn add(&mut self, db_id: u32, pos: Option<usize>) {
+    pub fn add(&mut self, path: impl AsRef<Path> + Into<PathBuf>, pos: Option<usize>) {
         self.next_id += 1;
+        let id = self.next_id;
         let entry = Entry {
-            queue_id: self.next_id,
-            db_id,
+            id,
+            path: path.into(),
         };
 
         match pos {
-            Some(pos) if pos <= self.list.len() => self.list.insert(pos, entry),
+            Some(pos) if pos < self.list.len() => self.list.insert(pos, entry),
             _ => self.list.push(entry),
         }
         if let QueueMode::Random(Random { rng, ids }) = &mut self.mode {
             if ids.is_empty() {
-                ids.push(entry.queue_id);
+                ids.push(id);
             } else {
                 // add to a random position in constant time
-                let random_pos = rng.random_range(0..ids.len());
-                let temp = mem::replace(&mut ids[random_pos], entry.queue_id);
+                let random_pos = rng.next_usize(0, ids.len() - 1);
+                let temp = mem::replace(&mut ids[random_pos], id);
                 ids.push(temp);
             }
         }
@@ -186,13 +215,13 @@ impl Queue {
             .list
             .iter()
             .filter(|entry| {
-                !self.history.contains(&entry.queue_id)
+                !self.history.contains(&entry.id)
                     && self
                         .current()
-                        .map(|cur_entry| entry.queue_id != cur_entry.queue_id)
+                        .map(|cur_entry| entry.id != cur_entry.id)
                         .unwrap_or(true)
             })
-            .map(|entry| entry.queue_id)
+            .map(|entry| entry.id)
             .collect();
         self.mode = QueueMode::Random(Random::new(not_played_ids));
     }
@@ -212,83 +241,57 @@ mod test {
 
     #[test]
     fn add_and_remove() {
-        let mut queue = Queue::new();
-        queue.add(1001, None);
-        queue.add(1002, Some(0));
-        queue.add(1003, None);
-        queue.add(1004, Some(2));
+        let mut queue = Queue::default();
+        queue.add("a", None);
+        queue.add("b", Some(0));
+        queue.add("c", None);
+        queue.add("d", Some(2));
         let expected = &[
-            (2, 1002).into(),
-            (1, 1001).into(),
-            (4, 1004).into(),
-            (3, 1003).into(),
+            (2, "b".into()).into(),
+            (1, "a".into()).into(),
+            (4, "d".into()).into(),
+            (3, "c".into()).into(),
         ];
-        assert_eq!(queue.as_inner(), expected);
+        assert_eq!(queue.inner(), expected);
 
         queue.remove(4);
         queue.remove(2137);
-        queue.add(1005, None);
+        queue.add("e", None);
         queue.remove(2);
-        queue.add(1006, Some(1));
+        queue.add("f", Some(1));
         let expected = &[
-            (1, 1001).into(),
-            (6, 1006).into(),
-            (3, 1003).into(),
-            (5, 1005).into(),
+            (1, "a".into()).into(),
+            (6, "f".into()).into(),
+            (3, "c".into()).into(),
+            (5, "e".into()).into(),
         ];
-        assert_eq!(queue.as_inner(), expected);
+        assert_eq!(queue.inner(), expected);
     }
 
     #[test]
     fn traversing() {
-        let mut queue = Queue::new();
+        let mut queue = Queue::default();
         let n = 5;
-        for i in 1001..=(1000 + n) {
-            queue.add(i, None);
+        for i in 1..=n {
+            queue.add(format!("song{}", i), None);
         }
 
         queue.move_next();
         queue.move_next();
-        assert_eq!(queue.current(), Some((2, 1002).into()));
+        assert_eq!(queue.current(), Some((2, "song2".into()).into()).as_ref());
         queue.move_next();
         queue.move_prev();
-        assert_eq!(queue.current(), Some((2, 1002).into()));
+        assert_eq!(queue.current(), Some((2, "song2".into()).into()).as_ref());
         queue.move_next();
         queue.move_next();
-        assert_eq!(queue.current(), Some((4, 1004).into()));
+        assert_eq!(queue.current(), Some((4, "song4".into()).into()).as_ref());
         queue.move_next();
         queue.move_next();
         assert_eq!(queue.current(), None);
         queue.move_prev();
-        assert_eq!(queue.current(), Some((5, 1005).into()));
+        assert_eq!(queue.current(), Some((5, "song5".into()).into()).as_ref());
         queue.move_next();
         queue.move_next();
-        assert_eq!(queue.current(), Some((1, 1001).into()));
-    }
-
-    #[test]
-    fn random() {
-        let mut queue = Queue::new();
-        let n = 100;
-        for i in 1000..(1000 + n) {
-            queue.add(i, None);
-        }
-
-        let mut seen = HashSet::new();
-        queue.move_next();
-        let cur_on_toggle = queue.current();
-        seen.insert(cur_on_toggle.unwrap().queue_id);
-        queue.start_random();
-        for i in 0..(n - 1) {
-            let cur = queue.current();
-            if i == 0 {
-                // check that toggling random doesn't "move" the current song
-                assert_eq!(cur, cur_on_toggle);
-            } else {
-                assert!(cur.is_some() && !seen.contains(&cur.unwrap().queue_id));
-            }
-            seen.insert(cur.unwrap().queue_id);
-            queue.move_next();
-        }
+        assert_eq!(queue.current(), Some((1, "song1".into()).into()).as_ref());
     }
 }

@@ -1,33 +1,47 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::Parser;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+use toml::{Table, Value};
 
 use crate::constants;
 
 #[derive(Parser, Debug)]
 #[command(version, about, author, long_about = None)]
 pub struct CliOptions {
-    /// Port on which musing will listen for clients.
-    #[arg(short = 'p', long = "port")]
-    pub port: Option<u16>,
-
-    /// Audio device to use as the output.
+    /// Audio device to use as the output (default: the system's default).
     #[arg(short = 'd', long = "device")]
     pub audio_device: Option<String>,
 
-    /// Path to the directory containing the music files.
+    /// Path to the directory containing music files (default: the process' CWD).
     #[arg(short = 'm', long = "music")]
     pub music_dir: Option<PathBuf>,
 
-    /// Path to the musing.toml config file.
+    /// Path to the directory containing playlist files (default: <music_dir>/playlists).
+    #[arg(short = 'p', long = "playlists")]
+    pub playlist_dir: Option<PathBuf>,
+
+    /// Path to the config file (default: <config_dir>/musing/musing.toml).
     #[arg(short = 'c', long = "config")]
     pub config_file: Option<PathBuf>,
 
-    /// Path to the log file.
+    /// Path to the log file (default: <cache_dir>/musing.log).
     #[arg(short = 'l', long = "log")]
     pub log_file: Option<PathBuf>,
 
-    /// Print logs to stderr.
+    /// Path to the state file, used to retrieve the queue and some settings from the previous
+    /// run of musing
+    /// (default: <cache_dir>/musing.state).
+    #[arg(short = 's', long = "state")]
+    pub state_file: Option<PathBuf>,
+
+    /// Port on which musing will listen for clients (default: 2137).
+    #[arg(long = "port")]
+    pub port: Option<u16>,
+
+    /// Print logs to stderr (default: false).
     #[arg(long = "stderr")]
     pub log_stderr: bool,
 }
@@ -39,9 +53,10 @@ pub struct ServerConfig {
 
 #[derive(Debug)]
 pub struct PlayerConfig {
-    pub audio_device: Option<String>,
     pub music_dir: PathBuf,
-    pub allowed_exts: Vec<String>,
+    pub state_file: PathBuf,
+    pub audio_device: Option<String>,
+    pub playlist_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Default)]
@@ -58,35 +73,74 @@ impl Default for ServerConfig {
     }
 }
 
-impl ServerConfig {}
+impl ServerConfig {
+    pub fn try_new(content: impl AsRef<str>) -> Result<Self> {
+        let mut config = Self::default();
+        let table = content.as_ref().parse::<Table>()?;
+        for (key, val) in table {
+            if let ("port", Value::Integer(port)) = (key.as_str(), val) {
+                config.port = port as u16;
+            }
+        }
+
+        Ok(config)
+    }
+}
 
 impl Default for PlayerConfig {
     fn default() -> Self {
         Self {
+            music_dir: PathBuf::from(constants::DEFAULT_MUSIC_DIR),
+            state_file: dirs::cache_dir()
+                .unwrap_or(".".into())
+                .join(constants::DEFAULT_STATE_FILE),
             audio_device: None,
-            music_dir: constants::DEFAULT_MUSIC_DIR.into(),
-            allowed_exts: constants::DEFAULT_ALLOWED_EXTS
-                .into_iter()
-                .map(|s| s.to_string())
-                .collect(),
+            playlist_dir: None,
         }
     }
 }
 
-impl PlayerConfig {}
+impl PlayerConfig {
+    pub fn try_new(content: impl AsRef<str>) -> Result<Self> {
+        let mut config = Self::default();
+        let table = content.as_ref().parse::<Table>()?;
+        for (key, val) in table {
+            match (key.as_str(), val) {
+                ("music_dir", Value::String(music_dir)) => {
+                    config.music_dir = music_dir.into();
+                }
+                ("state_file", Value::String(state_file)) => {
+                    config.state_file = state_file.into();
+                }
+                ("audio_device", Value::String(audio_device)) => {
+                    config.audio_device = Some(audio_device);
+                }
+                ("playlist_dir", Value::String(playlist_dir)) => {
+                    config.playlist_dir = Some(playlist_dir.into());
+                }
+                _ => (),
+            }
+        }
+
+        Ok(config)
+    }
+}
 
 impl Config {
-    pub fn from_file(_path: Option<&Path>) -> Result<Self> {
-        // let default_path = dirs::config_dir()
-        //     .unwrap_or(dirs::home_dir().unwrap())
-        //     .join(constants::DEFAULT_CONFIG_FILE);
-        // let path = path.unwrap_or(&default_path);
-        // if path doesn't exist return the default
-        // read the toml file
-        // server_config = ..from_toml_pairs()?
-        // player_config = ditto
-        // Ok(Config { server_config, player_config })
-        Ok(Config::default())
+    pub fn from_file(path: Option<&Path>) -> Result<Self> {
+        let default_path = dirs::config_dir()
+            .ok_or(anyhow!("no config dir found on the system"))?
+            .join(constants::DEFAULT_CONFIG_DIR)
+            .join(constants::DEFAULT_CONFIG_FILE);
+        let path = path.unwrap_or(&default_path);
+        let content = fs::read_to_string(path)?;
+        let server_config = ServerConfig::try_new(&content)?;
+        let player_config = PlayerConfig::try_new(&content)?;
+
+        Ok(Self {
+            server_config,
+            player_config,
+        })
     }
 
     pub fn merge_with_cli(self, cli_opts: CliOptions) -> Self {
@@ -94,9 +148,10 @@ impl Config {
             port: cli_opts.port.unwrap_or(self.server_config.port),
         };
         let player_config = PlayerConfig {
-            audio_device: cli_opts.audio_device,
             music_dir: cli_opts.music_dir.unwrap_or(self.player_config.music_dir),
-            ..self.player_config
+            state_file: cli_opts.state_file.unwrap_or(self.player_config.state_file),
+            audio_device: cli_opts.audio_device.or(self.player_config.audio_device),
+            playlist_dir: cli_opts.playlist_dir.or(self.player_config.playlist_dir),
         };
 
         Config {

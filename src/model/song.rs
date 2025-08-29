@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use std::{
     collections::HashMap,
     fs::File,
@@ -7,24 +7,21 @@ use std::{
 use symphonia::core::{
     formats::{FormatOptions, FormatReader},
     io::MediaSourceStream,
-    meta::{MetadataOptions, MetadataRevision, Visual},
+    meta::{MetadataOptions, MetadataRevision},
     probe::{Hint, ProbeResult},
 };
 
 use crate::model::tag_key::TagKey;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Metadata {
     data: HashMap<TagKey, String>,
 }
 
+#[derive(Clone)]
 pub struct Song {
     pub path: PathBuf, // absolute path
     pub metadata: Metadata,
-}
-
-pub struct SongProxy {
-    pub path: PathBuf, // absolute path
 }
 
 #[derive(Debug)]
@@ -57,11 +54,9 @@ impl Metadata {
     }
 }
 
-impl TryFrom<&Path> for Song {
-    type Error = anyhow::Error;
-
-    fn try_from(path: &Path) -> Result<Self> {
-        let mut probe_res = song_utils::get_probe_result(path, false)?;
+impl Song {
+    pub fn try_new(path: impl AsRef<Path> + Into<PathBuf>) -> Result<Self> {
+        let mut probe_res = song_utils::get_probe_result(&path, false)?;
         let metadata_container = probe_res
             .format
             .metadata()
@@ -74,7 +69,7 @@ impl TryFrom<&Path> for Song {
             .map(|m| m.current().map(Metadata::from).unwrap_or_default())
             .unwrap_or_default();
         let song = Self {
-            path: path.to_path_buf(),
+            path: path.into(),
             metadata: metadata_container.merge(metadata_probe),
         };
 
@@ -82,35 +77,18 @@ impl TryFrom<&Path> for Song {
     }
 }
 
-impl Song {
-    // TODO: base64 encode
-    pub fn get_cover_art(&self) -> Option<Vec<u8>> {
-        None
-    }
-}
-
-impl From<&Song> for SongProxy {
-    fn from(song: &Song) -> SongProxy {
-        Self {
-            path: song.path.clone(),
-        }
-    }
-}
-
-impl SongProxy {
-    pub fn demuxer(&self, gapless: bool) -> Result<Box<dyn FormatReader>> {
-        let probe_res = song_utils::get_probe_result(&self.path, gapless)?;
-        Ok(probe_res.format)
-    }
+pub fn demuxer(path: impl AsRef<Path>, gapless: bool) -> Result<Box<dyn FormatReader>> {
+    let probe_res = song_utils::get_probe_result(path, gapless)?;
+    Ok(probe_res.format)
 }
 
 mod song_utils {
     use super::*;
 
-    pub fn get_probe_result(path: &Path, enable_gapless: bool) -> Result<ProbeResult> {
-        let source = Box::new(File::open(path)?);
+    pub fn get_probe_result(path: impl AsRef<Path>, enable_gapless: bool) -> Result<ProbeResult> {
+        let source = Box::new(File::open(path.as_ref())?);
         let mut hint = Hint::new();
-        if let Some(ext) = path.extension()
+        if let Some(ext) = path.as_ref().extension()
             && let Some(ext) = ext.to_str()
         {
             hint.with_extension(ext);

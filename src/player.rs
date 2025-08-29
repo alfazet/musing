@@ -1,6 +1,8 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use serde_json::Map;
+use std::path::PathBuf;
 use tokio::sync::{
+    broadcast,
     mpsc::{self as tokio_chan},
     oneshot,
 };
@@ -10,59 +12,24 @@ use crate::{
     config::PlayerConfig,
     database::Database,
     model::{
+        decoder::{Speed, Volume},
         queue::Queue,
         request::{self, Request, RequestKind},
         response::Response,
-        song::{SongEvent, SongProxy},
+        song::SongEvent,
     },
+    state::{AudioState, PlayerState, State},
 };
 
 struct Player {
-    queue: Queue,
-    database: Database,
     audio: Audio,
-    rx_request: tokio_chan::UnboundedReceiver<Request>,
+    database: Database,
+    queue: Queue,
     rx_event: tokio_chan::UnboundedReceiver<SongEvent>,
+    rx_request: tokio_chan::UnboundedReceiver<Request>,
 }
 
 impl Player {
-    fn song_by_db_id(&self, db_id: u32) -> Result<SongProxy> {
-        let Some(song) = self.database.song_by_id(db_id) else {
-            bail!(format!(
-                "song with id `{}` not found in the database",
-                db_id
-            ));
-        };
-
-        Ok(song.into())
-    }
-
-    fn play(&mut self, db_id: u32) -> Result<()> {
-        self.queue.add_current_to_history();
-        let song_proxy = self.song_by_db_id(db_id)?;
-        self.audio.play(song_proxy)?;
-
-        Ok(())
-    }
-
-    fn move_next_until_playable(&mut self) {
-        while let Some(entry) = self.queue.move_next() {
-            match self.play(entry.db_id) {
-                Ok(_) => break,
-                Err(e) => log::error!("playback error ({})", e),
-            }
-        }
-    }
-
-    fn move_prev_until_playable(&mut self) {
-        while let Some(entry) = self.queue.move_prev() {
-            match self.play(entry.db_id) {
-                Ok(_) => break,
-                Err(e) => log::error!("playback error ({})", e),
-            }
-        }
-    }
-
     // database requests are blocking and (mostly) parallelizable,
     // so we send them to rayon's thread pool
     async fn db_request(&mut self, req: request::DbRequestKind) -> Response {
@@ -72,12 +39,8 @@ impl Player {
                 use request::DbRequestKind;
 
                 let response = match req {
+                    DbRequestKind::Ls(args) => self.database.ls(args),
                     DbRequestKind::Metadata(args) => self.database.metadata(args),
-                    DbRequestKind::Reset => {
-                        self.queue.clear();
-                        self.audio.stop();
-                        self.database.reset()
-                    }
                     DbRequestKind::Select(args) => self.database.select(args),
                     DbRequestKind::Unique(args) => self.database.unique(args),
                     DbRequestKind::Update => self.database.update(),
@@ -101,32 +64,56 @@ impl Player {
                 let EnableArgs(device) = args;
                 self.audio.enable_device(&device).into()
             }
-            DeviceRequestKind::ListDevices => {
-                let devices = Map::from_iter(
-                    self.audio
-                        .list_devices()
-                        .into_iter()
-                        .map(|(d, enabled)| (d, enabled.into())),
-                );
+            DeviceRequestKind::Devices => {
+                let devices: Vec<_> = self
+                    .audio
+                    .list_devices()
+                    .into_iter()
+                    .map(|(d, enabled)| {
+                        let mut map = Map::new();
+                        map.insert("device".into(), d.into());
+                        map.insert("enabled".into(), enabled.into());
+
+                        map
+                    })
+                    .collect();
 
                 Response::new_ok().with_item("devices", &devices)
             }
         }
     }
 
-    fn playback_request(&mut self, req: request::PlaybackRequestKind) -> Response {
-        use request::{PlaybackRequestKind, SeekArgs, VolumeArgs, VolumeRequest};
+    async fn playback_request(&mut self, req: request::PlaybackRequestKind) -> Response {
+        use request::{ChangeVolumeArgs, PlaybackRequestKind, SeekArgs, SetVolumeArgs, SpeedArgs};
 
         match req {
+            PlaybackRequestKind::ChangeVolume(args) => {
+                let ChangeVolumeArgs(volume) = args;
+                self.audio.change_volume(volume);
+
+                Response::new_ok()
+            }
             PlaybackRequestKind::Gapless => {
                 self.audio.toggle_gapless();
                 Response::new_ok()
             }
-            PlaybackRequestKind::Pause => self.audio.pause().into(),
+            PlaybackRequestKind::Pause => self.audio.pause().await.into(),
             PlaybackRequestKind::Resume => self.audio.resume().into(),
             PlaybackRequestKind::Seek(args) => {
                 let SeekArgs(secs) = args;
                 self.audio.seek(secs);
+
+                Response::new_ok()
+            }
+            PlaybackRequestKind::SetVolume(args) => {
+                let SetVolumeArgs(volume) = args;
+                self.audio.set_volume(volume);
+
+                Response::new_ok()
+            }
+            PlaybackRequestKind::Speed(args) => {
+                let SpeedArgs(speed) = args;
+                self.audio.set_speed(speed);
 
                 Response::new_ok()
             }
@@ -136,36 +123,96 @@ impl Player {
 
                 Response::new_ok()
             }
-            PlaybackRequestKind::Toggle => self.audio.toggle().into(),
-            PlaybackRequestKind::Volume(args) => {
-                let VolumeArgs(volume_request) = args;
-                match volume_request {
-                    VolumeRequest::Change(x) => self.audio.change_volume(x),
-                    VolumeRequest::Set(x) => self.audio.set_volume(x),
-                }
+            PlaybackRequestKind::Toggle => self.audio.toggle().await.into(),
+        }
+    }
 
-                Response::new_ok()
+    fn playlist_request(&mut self, req: request::PlaylistRequestKind) -> Response {
+        use request::{
+            AddToPlaylistArgs, FromFileArgs, ListSongsArgs, LoadArgs, PlaylistRequestKind,
+            RemoveFromPlaylistArgs, SaveArgs,
+        };
+
+        match req {
+            PlaylistRequestKind::AddToPlaylist(args) => {
+                let AddToPlaylistArgs(playlist_path, song_path) = args;
+                self.database.add_to_playlist(playlist_path, song_path)
+            }
+            PlaylistRequestKind::FromFile(args) => {
+                let FromFileArgs(path) = args;
+                self.database.add_playlist_from_file(path)
+            }
+            PlaylistRequestKind::ListSongs(args) => {
+                let ListSongsArgs(path) = args;
+                match self.database.load_playlist(&path) {
+                    Some(playlist) => Response::new_ok().with_item("songs", &playlist.inner()),
+                    None => Response::new_err(format!(
+                        "playlist `{}` not found",
+                        path.to_string_lossy()
+                    )),
+                }
+            }
+            PlaylistRequestKind::Load(args) => {
+                let LoadArgs(path, range, pos) = args;
+                match self.database.load_playlist(&path) {
+                    Some(playlist) => {
+                        let not_found = add_to_queue(
+                            &self.database,
+                            &mut self.queue,
+                            playlist.inner(),
+                            range,
+                            pos,
+                        );
+                        if not_found.is_empty() {
+                            Response::new_ok()
+                        } else {
+                            Response::new_err(format!(
+                                "song(s) `{}` not found in the database",
+                                not_found
+                                    .into_iter()
+                                    .map(|p| p.to_string_lossy().into_owned())
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            ))
+                        }
+                    }
+                    None => Response::new_err(format!(
+                        "playlist `{}` not found",
+                        path.to_string_lossy()
+                    )),
+                }
+            }
+            PlaylistRequestKind::RemoveFromPlaylist(args) => {
+                let RemoveFromPlaylistArgs(path, pos) = args;
+                self.database.remove_from_playlist(path, pos)
+            }
+            PlaylistRequestKind::Save(args) => {
+                let SaveArgs(path) = args;
+                self.database.save_as_playlist(path, self.queue.inner())
             }
         }
     }
 
     fn queue_request(&mut self, req: request::QueueRequestKind) -> Response {
-        use request::{AddArgs, PlayArgs, QueueRequestKind, RemoveArgs};
+        use request::{AddToQueueArgs, PlayArgs, QueueRequestKind, RemoveFromQueueArgs};
 
         match req {
-            QueueRequestKind::Add(args) => {
-                let AddArgs(db_ids, insert_pos) = args;
-                for (offset, db_id) in db_ids.into_iter().enumerate() {
-                    match self.song_by_db_id(db_id) {
-                        Ok(_) => match insert_pos {
-                            Some(pos) => self.queue.add(db_id, Some(pos + offset)),
-                            None => self.queue.add(db_id, None),
-                        },
-                        Err(e) => return Response::new_err(e.to_string()),
-                    }
-                }
+            QueueRequestKind::AddToQueue(args) => {
+                let AddToQueueArgs(paths, pos) = args;
+                let not_found = add_to_queue(&self.database, &mut self.queue, &paths, None, pos);
 
-                Response::new_ok()
+                if not_found.is_empty() {
+                    Response::new_ok()
+                } else {
+                    Response::new_err(format!(
+                        "file(s) `{}` not found in the database",
+                        not_found
+                            .into_iter()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    ))
+                }
             }
             QueueRequestKind::Clear => {
                 self.queue.clear();
@@ -174,7 +221,7 @@ impl Player {
                 Response::new_ok()
             }
             QueueRequestKind::Next => {
-                self.move_next_until_playable();
+                move_next_until_playable(&mut self.queue, &mut self.audio);
                 if self.queue.current().is_none() {
                     self.audio.stop();
                 }
@@ -182,17 +229,21 @@ impl Player {
                 Response::new_ok()
             }
             QueueRequestKind::Play(args) => {
-                let PlayArgs(queue_id) = args;
-                match self.queue.move_to(queue_id) {
-                    Some(entry) => self.play(entry.db_id).into(),
-                    None => Response::new_err(format!(
-                        "song with id `{}` not found in the queue",
-                        queue_id
-                    )),
+                let PlayArgs(id) = args;
+                match self.queue.move_to(id) {
+                    Some(entry) => {
+                        let res = self.audio.play(&entry.path);
+                        if res.is_err() {
+                            self.queue.reset_pos();
+                            self.audio.stop();
+                        }
+                        res.into()
+                    }
+                    None => Response::new_err(format!("song with queue id `{}` not found", id)),
                 }
             }
             QueueRequestKind::Previous => {
-                self.move_prev_until_playable();
+                move_prev_until_playable(&mut self.queue, &mut self.audio);
                 if self.queue.current().is_none() {
                     self.audio.stop();
                 }
@@ -203,8 +254,8 @@ impl Player {
                 self.queue.start_random();
                 Response::new_ok()
             }
-            QueueRequestKind::Remove(args) => {
-                let RemoveArgs(queue_ids) = args;
+            QueueRequestKind::RemoveFromQueue(args) => {
+                let RemoveFromQueueArgs(queue_ids) = args;
                 for queue_id in queue_ids {
                     if self.queue.remove(queue_id) {
                         self.audio.stop();
@@ -224,26 +275,49 @@ impl Player {
         }
     }
 
-    fn status_request(&self, req: request::StatusRequestKind) -> Response {
+    async fn status_request(&self, req: request::StatusRequestKind) -> Response {
         use request::StatusRequestKind;
 
         match req {
-            StatusRequestKind::Current => match self.queue.current() {
-                Some(entry) => Response::new_ok().with_item("current", &entry),
-                None => Response::new_err("no song is playing right now"),
-            },
-            StatusRequestKind::Elapsed => Response::new_ok()
-                .with_item("elapsed", &self.audio.elapsed())
-                .with_item("duration", &self.audio.duration()),
+            StatusRequestKind::Playlists => {
+                let playlists = self.database.playlists();
+                Response::new_ok().with_item("playlists", &playlists.keys().collect::<Vec<_>>())
+            }
             StatusRequestKind::Queue => {
-                Response::new_ok().with_item("queue", &self.queue.as_inner())
+                let queue: Vec<_> = self
+                    .queue
+                    .inner()
+                    .iter()
+                    .map(|entry| {
+                        let mut map = Map::new();
+                        map.insert("id".into(), entry.id.into());
+                        map.insert("path".into(), entry.path.to_string_lossy().into());
+
+                        map
+                    })
+                    .collect();
+
+                Response::new_ok().with_item("queue", &queue)
             }
             StatusRequestKind::State => {
-                // TODO: also return stuff like gapless/random/single from here
-                Response::new_ok().with_item("state", &self.audio.state())
-            }
-            StatusRequestKind::Volume => {
-                Response::new_ok().with_item("volume", &self.audio.volume())
+                let mut response = Response::new_ok()
+                    .with_item("gapless", &self.audio.gapless())
+                    .with_item("mode", &self.queue.mode())
+                    .with_item("state", &self.audio.state())
+                    .with_item("speed", &self.audio.speed())
+                    .with_item("volume", &self.audio.volume());
+                if let Some(timer) = self.audio.playback_timer().await {
+                    response = response
+                        .with_item("elapsed", &timer.elapsed)
+                        .with_item("out_of", &timer.out_of);
+                }
+                if let Some(current) = self.queue.current() {
+                    response = response
+                        .with_item("id", &current.id)
+                        .with_item("path", &current.path.to_string_lossy());
+                }
+
+                response
             }
         }
     }
@@ -252,24 +326,28 @@ impl Player {
         match req {
             RequestKind::Db(req) => self.db_request(req).await,
             RequestKind::Device(req) => self.device_request(req),
-            RequestKind::Playback(req) => self.playback_request(req),
+            RequestKind::Playback(req) => self.playback_request(req).await,
+            RequestKind::Playlist(req) => self.playlist_request(req),
             RequestKind::Queue(req) => self.queue_request(req),
-            RequestKind::Status(req) => self.status_request(req),
+            RequestKind::Status(req) => self.status_request(req).await,
         }
     }
 
     pub fn new(
-        database: Database,
+        state: Option<PlayerState>,
         audio: Audio,
-        rx_request: tokio_chan::UnboundedReceiver<Request>,
+        database: Database,
         rx_event: tokio_chan::UnboundedReceiver<SongEvent>,
+        rx_request: tokio_chan::UnboundedReceiver<Request>,
     ) -> Self {
+        let queue = state.map(|s| s.queue).unwrap_or_default();
+
         Self {
-            queue: Queue::new(),
-            database,
             audio,
-            rx_request,
+            database,
+            queue,
             rx_event,
+            rx_request,
         }
     }
 
@@ -287,7 +365,7 @@ impl Player {
                 },
                 Some(event) = self.rx_event.recv() => match event {
                     SongEvent::Over => {
-                        self.move_next_until_playable();
+                        move_next_until_playable(&mut self.queue, &mut self.audio);
                         if self.queue.current().is_none() {
                             self.queue.reset_pos();
                             self.audio.stop();
@@ -298,30 +376,119 @@ impl Player {
             }
         }
     }
+
+    pub fn state(&self) -> State {
+        let volume = Volume::from(self.audio.volume());
+        let speed = Speed::from(self.audio.speed());
+        let gapless = self.audio.gapless();
+        let mut queue = self.queue.clone();
+        queue.reset_pos();
+
+        let audio_state = AudioState {
+            volume,
+            speed,
+            gapless,
+        };
+        let player_state = PlayerState { queue };
+
+        State {
+            audio_state,
+            player_state,
+        }
+    }
+}
+
+fn move_next_until_playable(queue: &mut Queue, audio: &mut Audio) {
+    queue.add_current_to_history();
+    while let Some(entry) = queue.move_next() {
+        match audio.play(&entry.path) {
+            Ok(_) => break,
+            Err(e) => log::error!("playback error ({})", e),
+        }
+    }
+}
+
+fn move_prev_until_playable(queue: &mut Queue, audio: &mut Audio) {
+    while let Some(entry) = queue.move_prev() {
+        match audio.play(&entry.path) {
+            Ok(_) => break,
+            Err(e) => log::error!("playback error ({})", e),
+        }
+    }
+}
+
+// returns the songs which weren't be found
+fn add_to_queue<'a>(
+    database: &Database,
+    queue: &mut Queue,
+    paths: &'a [PathBuf],
+    range: Option<(usize, usize)>,
+    pos: Option<usize>,
+) -> Vec<&'a PathBuf> {
+    let mut not_found = Vec::new();
+    let range = match range {
+        Some((start, end)) => {
+            let start = start.min(paths.len() - 1);
+            let end = end.clamp(start, paths.len() - 1);
+
+            start..=end
+        }
+        None => 0..=(paths.len() - 1),
+    };
+    for (offset, path) in paths[range].iter().enumerate() {
+        match database.try_to_abs_path(path) {
+            Some(abs_path) => match pos {
+                Some(pos) => queue.add(&abs_path, Some(pos + offset)),
+                None => queue.add(&abs_path, None),
+            },
+            None => {
+                not_found.push(path);
+            }
+        }
+    }
+
+    not_found
 }
 
 pub async fn run(
     config: PlayerConfig,
     rx_request: tokio_chan::UnboundedReceiver<Request>,
+    mut rx_shutdown: broadcast::Receiver<()>,
 ) -> Result<()> {
     let PlayerConfig {
-        audio_device,
         music_dir,
-        allowed_exts,
+        state_file,
+        audio_device,
+        playlist_dir,
     } = config;
+    let (player_state, audio_state) = match State::try_from_file(&state_file) {
+        Ok(s) => (Some(s.player_state), Some(s.audio_state)),
+        Err(e) => {
+            log::error!("state file error ({})", e);
+            (None, None)
+        }
+    };
 
     let (tx_event, rx_event) = tokio_chan::unbounded_channel();
-    let audio = Audio::new(tx_event).with_default(audio_device.as_ref())?;
+    let audio = Audio::new(audio_state, tx_event).with_default(audio_device.as_ref())?;
     // creating the db is blocking and parallelizable,
     // so we delegate it to rayon's thread pool
     let database = {
         let (tx, rx) = oneshot::channel();
         rayon::spawn(move || {
-            let _ = tx.send(Database::from_dir(&music_dir, &allowed_exts));
+            let _ = tx.send(Database::try_new(music_dir, playlist_dir.as_ref()));
         });
         rx.await?
     }?;
-    let mut player = Player::new(database, audio, rx_request, rx_event);
+    let mut player = Player::new(player_state, audio, database, rx_event, rx_request);
 
-    player.run().await
+    tokio::select! {
+        res = player.run() => res,
+        _ = rx_shutdown.recv() => {
+            let state = player.state();
+            state.save(state_file)?;
+
+            Ok(())
+        }
+    }
 }

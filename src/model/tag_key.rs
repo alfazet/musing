@@ -114,7 +114,7 @@ impl TryFrom<&str> for TagKey {
         use StandardTagKey as STKey;
 
         let Some(key) = TAG_MAP.get(&s).cloned() else {
-            bail!("invalid tag name");
+            bail!("invalid tag `{}`", s);
         };
         let kind = match key {
             STKey::Bpm => TagKeyKind::Integer,

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use serde_json::json;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
@@ -37,8 +38,8 @@ impl ClientHandler {
         tx_request: tokio_chan::UnboundedSender<Request>,
         mut rx_shutdown: broadcast::Receiver<()>,
     ) -> Result<()> {
-        let banner = format!("musing v{}\n", env!("CARGO_PKG_VERSION"));
-        let bytes = banner.as_bytes();
+        let welcome = json!({"version": env!("CARGO_PKG_VERSION")}).to_string();
+        let bytes = welcome.as_bytes();
         self.stream.write_u32(bytes.len() as u32).await?;
         self.stream.write_all(bytes).await?;
 
@@ -112,6 +113,7 @@ impl Server {
 pub async fn run(
     config: ServerConfig,
     tx_request: tokio_chan::UnboundedSender<Request>,
+    mut rx_shutdown: broadcast::Receiver<()>,
 ) -> Result<()> {
     // the "shutdown" channel keeps one sender and many receivers
     // each client handler gets its own receiver
@@ -122,5 +124,8 @@ pub async fn run(
     let (tx_shutdown, _) = broadcast::channel(1);
     let server = Server::new(config);
 
-    server.run(tx_request, tx_shutdown).await
+    tokio::select! {
+        res = server.run(tx_request, tx_shutdown) => res,
+        _ = rx_shutdown.recv() => Ok(()),
+    }
 }

@@ -2,6 +2,7 @@ pub mod comparator;
 pub mod decoder;
 pub mod device;
 pub mod filter;
+pub mod playlist;
 pub mod queue;
 pub mod request;
 pub mod resampler;

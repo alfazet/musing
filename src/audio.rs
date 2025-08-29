@@ -6,17 +6,22 @@ use cpal::{
 use crossbeam_channel::{self as cbeam_chan};
 use std::{
     collections::HashMap,
+    path::Path,
     sync::{Arc, RwLock},
 };
-use tokio::sync::mpsc::{self as tokio_chan};
+use tokio::sync::{
+    mpsc::{self as tokio_chan},
+    oneshot,
+};
 
 use crate::{
     constants,
     model::{
-        decoder::{Decoder, DecoderRequest, Seek, Volume},
+        decoder::{Decoder, DecoderRequest, PlaybackTimer, Seek, Speed, Volume},
         device::{Device, DeviceProxy},
-        song::{SongEvent, SongProxy},
+        song::SongEvent,
     },
+    state::AudioState,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -31,8 +36,7 @@ enum PlaybackState {
 struct Playback {
     state: PlaybackState,
     volume: Arc<RwLock<Volume>>,
-    elapsed: Arc<RwLock<u64>>,
-    duration: u64,
+    speed: Arc<RwLock<Speed>>,
     gapless: bool,
 }
 
@@ -45,9 +49,21 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn new(tx_event: tokio_chan::UnboundedSender<SongEvent>) -> Self {
+    pub fn new(
+        state: Option<AudioState>,
+        tx_event: tokio_chan::UnboundedSender<SongEvent>,
+    ) -> Self {
+        let playback = state
+            .map(|s| Playback {
+                state: PlaybackState::default(),
+                volume: Arc::new(RwLock::new(s.volume)),
+                speed: Arc::new(RwLock::new(s.speed)),
+                gapless: s.gapless,
+            })
+            .unwrap_or_default();
+
         Self {
-            playback: Playback::default(),
+            playback,
             devices: HashMap::new(),
             n_enabled_devices: 0,
             tx_request: None,
@@ -55,28 +71,30 @@ impl Audio {
         }
     }
 
-    pub fn play(&mut self, song_proxy: SongProxy) -> Result<()> {
+    pub fn play(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let volume = Arc::clone(&self.playback.volume);
-        let elapsed = Arc::clone(&self.playback.elapsed);
+        let speed = Arc::clone(&self.playback.speed);
         let (tx_request, rx_request) = crossbeam_channel::unbounded();
+        // activate enabled devices
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.play(self.tx_event.clone())?;
         }
+        // create proxies of active devices for the decoder
         let device_proxies: Vec<_> = self
             .devices
             .values()
             .filter_map(DeviceProxy::try_new)
             .collect();
         if device_proxies.is_empty() {
-            bail!("playback error (all audio devices are disabled)");
+            bail!("all audio devices are disabled");
         }
+        // stop the current decoder instance (if it exists)
         if let Some(tx_request) = &self.tx_request {
             let _ = tx_request.send(DecoderRequest::Stop);
         }
-        let mut decoder = Decoder::try_new(song_proxy, device_proxies, self.playback.gapless)?;
-        self.playback.duration = decoder.duration().unwrap_or_default();
+        let mut decoder = Decoder::try_new(path, device_proxies, self.playback.gapless)?;
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = decoder.run(rx_request, volume, elapsed) {
+            if let Err(e) = decoder.run(rx_request, volume, speed) {
                 log::error!("decoder error ({})", e);
             }
         });
@@ -106,7 +124,11 @@ impl Audio {
         Ok(self)
     }
 
-    fn add_device(&mut self, cpal_device: CpalDevice, name: &str) -> Result<()> {
+    fn add_device(
+        &mut self,
+        cpal_device: CpalDevice,
+        name: impl AsRef<str> + Into<String>,
+    ) -> Result<()> {
         let device = Device::try_from(cpal_device)?;
         self.devices.insert(name.into(), device);
 
@@ -132,8 +154,8 @@ impl Audio {
         res
     }
 
-    pub fn enable_device(&mut self, device_name: &str) -> Result<()> {
-        let res = match self.devices.get_mut(device_name) {
+    pub fn enable_device(&mut self, device_name: impl AsRef<str>) -> Result<()> {
+        let res = match self.devices.get_mut(device_name.as_ref()) {
             Some(device) => match self.playback.state {
                 PlaybackState::Stopped => device.enable(None),
                 _ => {
@@ -148,7 +170,7 @@ impl Audio {
                     res
                 }
             },
-            None => bail!(format!("device {} not found", device_name)),
+            None => bail!(format!("device {} not found", device_name.as_ref())),
         };
         if let Ok(new_enabled) = res
             && new_enabled
@@ -160,21 +182,6 @@ impl Audio {
     }
 
     pub fn list_devices(&self) -> Vec<(String, bool)> {
-        // let devices: Vec<_> = self
-        //     .devices
-        //     .values()
-        //     .map(|d| {
-        //         let mut json_map = Map::new();
-        //         json_map.insert(
-        //             "name".into(),
-        //             d.name().unwrap_or(constants::UNKNOWN_DEVICE.into()).into(),
-        //         );
-        //         json_map.insert("enabled".into(), d.is_enabled().into());
-        //
-        //         json_map
-        //     })
-        //     .collect();
-        // Response::new_ok().with_item("devices", &devices)
         self.devices
             .values()
             .map(|d| {
@@ -190,9 +197,16 @@ impl Audio {
         self.playback.gapless ^= true;
     }
 
-    pub fn pause(&mut self) -> Result<()> {
+    pub async fn pause(&mut self) -> Result<()> {
         if let PlaybackState::Stopped = self.playback.state {
             return Ok(());
+        }
+        if let Some(tx_request) = &self.tx_request {
+            let (tx, rx) = oneshot::channel();
+            // wait for confirmation before pausing devices so that the decoder
+            // can finish sending a packet if it's in-progress
+            let _ = tx_request.send(DecoderRequest::Pause(tx));
+            let _ = rx.await;
         }
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.pause()?;
@@ -205,6 +219,9 @@ impl Audio {
     pub fn resume(&mut self) -> Result<()> {
         if let PlaybackState::Stopped = self.playback.state {
             return Ok(());
+        }
+        if let Some(tx_request) = &self.tx_request {
+            let _ = tx_request.send(DecoderRequest::Resume);
         }
         for device in self.devices.values_mut().filter(|d| d.is_enabled()) {
             device.resume()?;
@@ -225,9 +242,9 @@ impl Audio {
         let _ = self.tx_request.take();
     }
 
-    pub fn toggle(&mut self) -> Result<()> {
+    pub async fn toggle(&mut self) -> Result<()> {
         match self.playback.state {
-            PlaybackState::Playing => self.pause(),
+            PlaybackState::Playing => self.pause().await,
             PlaybackState::Paused => self.resume(),
             _ => Ok(()),
         }
@@ -242,6 +259,10 @@ impl Audio {
             };
             let _ = tx.send(DecoderRequest::Seek(seek));
         }
+    }
+
+    pub fn set_speed(&mut self, new_speed: u16) {
+        *self.playback.speed.write().unwrap() = new_speed.into();
     }
 
     pub fn change_volume(&mut self, delta: i8) {
@@ -268,16 +289,32 @@ impl Audio {
         (*self.playback.volume.read().unwrap()).into()
     }
 
-    pub fn elapsed(&self) -> u64 {
-        *self.playback.elapsed.read().unwrap()
+    pub async fn playback_timer(&self) -> Option<PlaybackTimer> {
+        if let Some(tx_request) = &self.tx_request {
+            let (tx, rx) = oneshot::channel();
+            let _ = tx_request.send(DecoderRequest::Timer(tx));
+
+            rx.await.ok()
+        } else {
+            None
+        }
     }
 
-    pub fn duration(&self) -> u64 {
-        self.playback.duration
+    pub fn gapless(&self) -> bool {
+        self.playback.gapless
     }
 
-    pub fn state(&self) -> u8 {
-        self.playback.state as u8
+    pub fn state(&self) -> String {
+        match self.playback.state {
+            PlaybackState::Stopped => "stopped",
+            PlaybackState::Playing => "playing",
+            PlaybackState::Paused => "paused",
+        }
+        .into()
+    }
+
+    pub fn speed(&self) -> u16 {
+        (*self.playback.speed.read().unwrap()).into()
     }
 }
 
@@ -289,17 +326,17 @@ mod audio_utils {
         host.default_output_device()
     }
 
-    pub fn device_by_name(device_name: &str) -> Result<CpalDevice> {
+    pub fn device_by_name(device_name: impl AsRef<str>) -> Result<CpalDevice> {
         let host = cpal::default_host();
         match host
             .output_devices()?
-            .find(|x| x.name().map(|s| s == device_name).unwrap_or(false))
+            .find(|x| x.name().map(|s| s == device_name.as_ref()).unwrap_or(false))
         {
             Some(device) => Ok(device),
             None => {
                 let mut err_msg = format!(
                     "audio device `{}` unavailable, available devices: ",
-                    device_name
+                    device_name.as_ref()
                 );
                 for name in host
                     .output_devices()?
