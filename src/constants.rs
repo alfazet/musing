@@ -5,10 +5,11 @@ pub const DEFAULT_PORT: u16 = 2137;
 pub const DEFAULT_MUSIC_DIR: &str = ".";
 pub const DEFAULT_PLAYLIST_DIR: &str = "playlists";
 pub const DEFAULT_LOG_FILE: &str = "musing.log";
+pub const DEFAULT_STATE_FILE: &str = "musing.state";
 pub const DEFAULT_CONFIG_FILE: &str = "musing.toml";
 pub const DEFAULT_CONFIG_DIR: &str = "musing";
 pub const DEFAULT_IGNORE_FILE: &str = ".musingignore";
-pub const UNKNOWN_DEVICE: &str = "[unnamed]";
+pub const UNKNOWN_DEVICE: &str = "[unknown]";
 
 lazy_static! {
     pub static ref DEFAULT_ALLOWED_EXTS: HashSet<String> = HashSet::from([

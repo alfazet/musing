@@ -21,6 +21,7 @@ use crate::{
         device::{Device, DeviceProxy},
         song::SongEvent,
     },
+    state::AudioState,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -48,9 +49,21 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn new(tx_event: tokio_chan::UnboundedSender<SongEvent>) -> Self {
+    pub fn new(
+        state: Option<AudioState>,
+        tx_event: tokio_chan::UnboundedSender<SongEvent>,
+    ) -> Self {
+        let playback = state
+            .map(|s| Playback {
+                state: PlaybackState::default(),
+                volume: Arc::new(RwLock::new(s.volume)),
+                speed: Arc::new(RwLock::new(s.speed)),
+                gapless: s.gapless,
+            })
+            .unwrap_or_default();
+
         Self {
-            playback: Playback::default(),
+            playback,
             devices: HashMap::new(),
             n_enabled_devices: 0,
             tx_request: None,

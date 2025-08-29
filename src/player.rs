@@ -2,6 +2,7 @@ use anyhow::Result;
 use serde_json::Map;
 use std::path::PathBuf;
 use tokio::sync::{
+    broadcast,
     mpsc::{self as tokio_chan},
     oneshot,
 };
@@ -11,11 +12,13 @@ use crate::{
     config::PlayerConfig,
     database::Database,
     model::{
+        decoder::{Speed, Volume},
         queue::Queue,
         request::{self, Request, RequestKind},
         response::Response,
         song::SongEvent,
     },
+    state::{AudioState, PlayerState, State},
 };
 
 struct Player {
@@ -331,15 +334,18 @@ impl Player {
     }
 
     pub fn new(
+        state: Option<PlayerState>,
         audio: Audio,
         database: Database,
         rx_event: tokio_chan::UnboundedReceiver<SongEvent>,
         rx_request: tokio_chan::UnboundedReceiver<Request>,
     ) -> Self {
+        let queue = state.map(|s| s.queue).unwrap_or_default();
+
         Self {
             audio,
             database,
-            queue: Queue::new(),
+            queue,
             rx_event,
             rx_request,
         }
@@ -370,6 +376,26 @@ impl Player {
             }
         }
     }
+
+    pub fn state(&self) -> State {
+        let volume = Volume::from(self.audio.volume());
+        let speed = Speed::from(self.audio.speed());
+        let gapless = self.audio.gapless();
+        let mut queue = self.queue.clone();
+        queue.reset_pos();
+
+        let audio_state = AudioState {
+            volume,
+            speed,
+            gapless,
+        };
+        let player_state = PlayerState { queue };
+
+        State {
+            audio_state,
+            player_state,
+        }
+    }
 }
 
 fn move_next_until_playable(queue: &mut Queue, audio: &mut Audio) {
@@ -391,7 +417,7 @@ fn move_prev_until_playable(queue: &mut Queue, audio: &mut Audio) {
     }
 }
 
-// returns songs which couldn't be found
+// returns the songs which weren't be found
 fn add_to_queue<'a>(
     database: &Database,
     queue: &mut Queue,
@@ -427,16 +453,24 @@ fn add_to_queue<'a>(
 pub async fn run(
     config: PlayerConfig,
     rx_request: tokio_chan::UnboundedReceiver<Request>,
+    mut rx_shutdown: broadcast::Receiver<()>,
 ) -> Result<()> {
     let PlayerConfig {
-        audio_device,
         music_dir,
+        state_file,
+        audio_device,
         playlist_dir,
-        // allowed_exts,
     } = config;
+    let (player_state, audio_state) = match State::try_from_file(&state_file) {
+        Ok(s) => (Some(s.player_state), Some(s.audio_state)),
+        Err(e) => {
+            log::error!("state file error ({})", e);
+            (None, None)
+        }
+    };
 
     let (tx_event, rx_event) = tokio_chan::unbounded_channel();
-    let audio = Audio::new(tx_event).with_default(audio_device.as_ref())?;
+    let audio = Audio::new(audio_state, tx_event).with_default(audio_device.as_ref())?;
     // creating the db is blocking and parallelizable,
     // so we delegate it to rayon's thread pool
     let database = {
@@ -446,8 +480,15 @@ pub async fn run(
         });
         rx.await?
     }?;
-    // TODO: recreate the queue from a state file
-    let mut player = Player::new(audio, database, rx_event, rx_request);
+    let mut player = Player::new(player_state, audio, database, rx_event, rx_request);
 
-    player.run().await
+    tokio::select! {
+        res = player.run() => res,
+        _ = rx_shutdown.recv() => {
+            let state = player.state();
+            state.save(state_file)?;
+
+            Ok(())
+        }
+    }
 }

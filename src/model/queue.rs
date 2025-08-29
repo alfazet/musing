@@ -1,23 +1,31 @@
-use rand::{prelude::*, seq::SliceRandom};
+use bincode::{self, Decode, Encode};
 use std::{
     collections::HashSet,
     mem,
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Debug, PartialEq)]
+// https://www.ams.org/journals/mcom/1999-68-225/S0025-5718-99-00996-5/S0025-5718-99-00996-5.pdf
+// not using an rng from the rand crate makes (de)serialization easier
+const RNG_A: usize = 35;
+const RNG_MOD: usize = 509;
+
+#[derive(Clone, Debug, Decode, Encode, PartialEq)]
 pub struct Entry {
     pub id: u32,
     pub path: PathBuf,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Decode, Encode)]
+struct Rng(usize);
+
+#[derive(Clone, Debug, Decode, Encode)]
 struct Random {
-    rng: SmallRng,
+    rng: Rng,
     ids: Vec<u32>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Decode, Default, Encode)]
 enum QueueMode {
     #[default]
     Sequential,
@@ -25,7 +33,7 @@ enum QueueMode {
     Random(Random),
 }
 
-#[derive(Default)]
+#[derive(Clone, Decode, Default, Encode)]
 pub struct Queue {
     list: Vec<Entry>,
     pos: Option<usize>,
@@ -40,10 +48,21 @@ impl From<(u32, PathBuf)> for Entry {
     }
 }
 
+impl Rng {
+    pub fn next_usize(&mut self, l: usize, r: usize) -> usize {
+        self.0 = (self.0 * RNG_A) % RNG_MOD;
+        self.0 % (r - l + 1) + l
+    }
+}
+
 impl Random {
     pub fn new(mut ids: Vec<u32>) -> Self {
-        let mut rng = SmallRng::from_os_rng();
-        ids.shuffle(&mut rng);
+        let mut rng = Rng(ids.len());
+        // Fisher-Yates shuffle
+        for i in 0..(ids.len() - 1) {
+            let j = rng.next_usize(i, ids.len() - 1);
+            ids.swap(i, j);
+        }
 
         Self { rng, ids }
     }
@@ -52,10 +71,6 @@ impl Random {
 impl Queue {
     fn find_by_id(&self, id: u32) -> Option<usize> {
         self.list.iter().position(|entry| entry.id == id)
-    }
-
-    pub fn new() -> Self {
-        Self::default()
     }
 
     pub fn mode(&self) -> String {
@@ -157,7 +172,7 @@ impl Queue {
                 ids.push(id);
             } else {
                 // add to a random position in constant time
-                let random_pos = rng.random_range(0..ids.len());
+                let random_pos = rng.next_usize(0, ids.len() - 1);
                 let temp = mem::replace(&mut ids[random_pos], id);
                 ids.push(temp);
             }
@@ -226,7 +241,7 @@ mod test {
 
     #[test]
     fn add_and_remove() {
-        let mut queue = Queue::new();
+        let mut queue = Queue::default();
         queue.add("a", None);
         queue.add("b", Some(0));
         queue.add("c", None);
@@ -255,7 +270,7 @@ mod test {
 
     #[test]
     fn traversing() {
-        let mut queue = Queue::new();
+        let mut queue = Queue::default();
         let n = 5;
         for i in 1..=n {
             queue.add(format!("song{}", i), None);

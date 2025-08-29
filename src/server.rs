@@ -113,6 +113,7 @@ impl Server {
 pub async fn run(
     config: ServerConfig,
     tx_request: tokio_chan::UnboundedSender<Request>,
+    mut rx_shutdown: broadcast::Receiver<()>,
 ) -> Result<()> {
     // the "shutdown" channel keeps one sender and many receivers
     // each client handler gets its own receiver
@@ -123,5 +124,8 @@ pub async fn run(
     let (tx_shutdown, _) = broadcast::channel(1);
     let server = Server::new(config);
 
-    server.run(tx_request, tx_shutdown).await
+    tokio::select! {
+        res = server.run(tx_request, tx_shutdown) => res,
+        _ = rx_shutdown.recv() => Ok(()),
+    }
 }

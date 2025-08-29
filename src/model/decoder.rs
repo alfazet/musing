@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow, bail};
+use bincode::{Decode, Encode};
 use crossbeam_channel::{self as cbeam_chan, TryRecvError};
 use std::{
     io,
@@ -33,7 +34,7 @@ pub struct PlaybackTimer {
     time_base: TimeBase,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Decode, Encode)]
 pub struct Volume(u8);
 
 impl From<u8> for Volume {
@@ -54,7 +55,7 @@ impl Default for Volume {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Decode, Encode, PartialEq)]
 pub struct Speed(u16);
 
 impl From<u16> for Speed {
