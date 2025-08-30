@@ -48,31 +48,26 @@ async fn main() {
     };
 
     let (tx_request, rx_request) = tokio_chan::unbounded_channel();
-    // two-way shutdown notification to ensure that state is saved before the program exits
-    let (tx_shutdown1, rx_shutdown1) = broadcast::channel(1);
+    // two-way shutdown notification to ensure that state is saved no matter how the program exits
+    let (tx_shutdown1, _) = broadcast::channel(1);
     let (tx_shutdown2, mut rx_shutdown2) = broadcast::channel(1);
-    let rx_shutdown1_ = tx_shutdown1.subscribe();
-    let tx_shutdown2_ = tx_shutdown2.clone();
-    let server_task = tokio::spawn(async move {
-        let res = server::run(server_config, tx_request, rx_shutdown1).await;
-        if let Err(e) = res {
-            log::error!("fatal error ({})", e);
-        }
-        let _ = tx_shutdown2.send(());
-    });
-    let player_task = tokio::spawn(async move {
-        let res = player::run(player_config, rx_request, rx_shutdown1_).await;
-        if let Err(e) = res {
-            log::error!("fatal error ({})", e);
-        }
-        let _ = tx_shutdown2_.send(());
-    });
+    let server_task = server::spawn(
+        server_config,
+        tx_request,
+        tx_shutdown1.subscribe(),
+        tx_shutdown2.clone(),
+    );
+    let player_task = player::spawn(
+        player_config,
+        rx_request,
+        tx_shutdown1.subscribe(),
+        tx_shutdown2,
+    );
 
     tokio::select! {
         _ = signal::ctrl_c() => (),
         _ = rx_shutdown2.recv() => (),
     };
-    // make sure that state is saved (in case it's the server that crashed)
     let _ = tx_shutdown1.send(());
     let _ = tokio::join!(server_task, player_task);
 }

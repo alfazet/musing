@@ -8,6 +8,7 @@ use tokio::{
         mpsc::{self as tokio_chan},
         oneshot,
     },
+    task::JoinHandle,
 };
 
 use crate::{
@@ -128,4 +129,19 @@ pub async fn run(
         res = server.run(tx_request, tx_shutdown) => res,
         _ = rx_shutdown.recv() => Ok(()),
     }
+}
+
+pub fn spawn(
+    config: ServerConfig,
+    tx_request: tokio_chan::UnboundedSender<Request>,
+    rx_shutdown: broadcast::Receiver<()>,
+    tx_shutdown: broadcast::Sender<()>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let res = run(config, tx_request, rx_shutdown).await;
+        if let Err(e) = res {
+            log::error!("fatal error ({})", e);
+        }
+        let _ = tx_shutdown.send(());
+    })
 }

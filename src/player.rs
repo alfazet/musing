@@ -1,10 +1,13 @@
 use anyhow::Result;
 use serde_json::Map;
 use std::path::PathBuf;
-use tokio::sync::{
-    broadcast,
-    mpsc::{self as tokio_chan},
-    oneshot,
+use tokio::{
+    sync::{
+        broadcast,
+        mpsc::{self as tokio_chan},
+        oneshot,
+    },
+    task::JoinHandle,
 };
 
 use crate::{
@@ -491,4 +494,19 @@ pub async fn run(
             Ok(())
         }
     }
+}
+
+pub fn spawn(
+    config: PlayerConfig,
+    rx_request: tokio_chan::UnboundedReceiver<Request>,
+    rx_shutdown: broadcast::Receiver<()>,
+    tx_shutdown: broadcast::Sender<()>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let res = run(config, rx_request, rx_shutdown).await;
+        if let Err(e) = res {
+            log::error!("fatal error ({})", e);
+        }
+        let _ = tx_shutdown.send(());
+    })
 }
