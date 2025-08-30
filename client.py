@@ -124,14 +124,10 @@ while True:
         "random",
         "sequential",
         "single",
-        "current",
-        "elapsed",
         "playlists",
         "queue",
         "state",
-        "reset",
         "update",
-        "volume",
         "devices",
     ):
         msg = json.dumps({"kind": kind})

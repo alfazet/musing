@@ -69,11 +69,10 @@ async fn main() {
     });
 
     tokio::select! {
-        _ = signal::ctrl_c() => {
-            let _ = tx_shutdown1.send(());
-            let _ = server_task.await;
-            let _ = player_task.await;
-        }
+        _ = signal::ctrl_c() => (),
         _ = rx_shutdown2.recv() => (),
     };
+    // make sure that state is saved (in case it's the server that crashed)
+    let _ = tx_shutdown1.send(());
+    let _ = tokio::join!(server_task, player_task);
 }
