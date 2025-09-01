@@ -27,14 +27,14 @@ const MAX_VOLUME: u8 = 100;
 const MIN_SPEED: u16 = 25; // x0.25
 const MAX_SPEED: u16 = 400; // x4
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct PlaybackTimer {
     pub elapsed: u64,
-    pub out_of: u64,
+    pub duration: u64,
     time_base: TimeBase,
 }
 
-#[derive(Clone, Copy, Decode, Encode)]
+#[derive(Clone, Copy, Debug, Decode, Encode)]
 pub struct Volume(u8);
 
 impl From<u8> for Volume {
@@ -55,7 +55,7 @@ impl Default for Volume {
     }
 }
 
-#[derive(Clone, Copy, Decode, Encode, PartialEq)]
+#[derive(Clone, Copy, Debug, Decode, Encode, PartialEq)]
 pub struct Speed(u16);
 
 impl From<u16> for Speed {
@@ -82,6 +82,7 @@ pub enum Seek {
     Backwards(u64),
 }
 
+#[derive(Debug)]
 pub enum DecoderRequest {
     Disable(String),
     Enable(DeviceProxy),
@@ -92,7 +93,7 @@ pub enum DecoderRequest {
     Timer(oneshot::Sender<PlaybackTimer>),
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 enum DecoderState {
     #[default]
     Idle,
@@ -238,7 +239,7 @@ impl Decoder {
         }
 
         self.timer.elapsed = 0;
-        self.timer.out_of = self.duration().unwrap_or_default();
+        self.timer.duration = self.duration().unwrap_or_default();
         self.state = DecoderState::Active;
         let mut prev_speed = { *speed.read().unwrap() };
         loop {

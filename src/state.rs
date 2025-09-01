@@ -7,19 +7,19 @@ use crate::model::{
     queue::Queue,
 };
 
-#[derive(Decode, Encode)]
+#[derive(Debug, Decode, Encode)]
 pub struct AudioState {
     pub volume: Volume,
     pub speed: Speed,
     pub gapless: bool,
 }
 
-#[derive(Decode, Encode)]
+#[derive(Debug, Decode, Encode)]
 pub struct PlayerState {
     pub queue: Queue,
 }
 
-#[derive(Decode, Encode)]
+#[derive(Debug, Decode, Encode)]
 pub struct State {
     pub audio_state: AudioState,
     pub player_state: PlayerState,

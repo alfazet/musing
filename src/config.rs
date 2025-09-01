@@ -8,7 +8,7 @@ use toml::{Table, Value};
 
 use crate::constants;
 
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
 #[command(version, about, author, long_about = None)]
 pub struct CliOptions {
     /// Audio device to use as the output (default: the system's default).
@@ -79,7 +79,7 @@ impl ServerConfig {
         let table = content.as_ref().parse::<Table>()?;
         for (key, val) in table {
             if let ("port", Value::Integer(port)) = (key.as_str(), val) {
-                config.port = port as u16;
+                config.port = u16::try_from(port)?;
             }
         }
 
@@ -127,7 +127,7 @@ impl PlayerConfig {
 }
 
 impl Config {
-    pub fn from_file(path: Option<&Path>) -> Result<Self> {
+    pub fn try_from_file(path: Option<&Path>) -> Result<Self> {
         let default_path = dirs::config_dir()
             .ok_or(anyhow!("no config dir found on the system"))?
             .join(constants::DEFAULT_CONFIG_DIR)
@@ -154,7 +154,7 @@ impl Config {
             playlist_dir: cli_opts.playlist_dir.or(self.player_config.playlist_dir),
         };
 
-        Config {
+        Self {
             server_config,
             player_config,
         }

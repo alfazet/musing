@@ -652,7 +652,6 @@ dependencies = [
  "serde_json",
  "simple-logging",
  "symphonia",
- "thiserror 2.0.12",
  "tokio",
  "toml",
  "unidecode",

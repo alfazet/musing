@@ -38,11 +38,12 @@ async fn main() {
     let Config {
         server_config,
         player_config,
-    } = match Config::from_file(cli_opts.config_file.as_deref()).map(|c| c.merge_with_cli(cli_opts))
+    } = match Config::try_from_file(cli_opts.config_file.as_deref())
+        .map(|c| c.merge_with_cli(cli_opts))
     {
         Ok(config) => config,
         Err(e) => {
-            log::error!("config error ({}), falling back to default", e);
+            log::error!("config error ({}), falling back to default config", e);
             Config::default()
         }
     };

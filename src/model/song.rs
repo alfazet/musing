@@ -13,12 +13,12 @@ use symphonia::core::{
 
 use crate::model::tag_key::TagKey;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Metadata {
     data: HashMap<TagKey, String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Song {
     pub path: PathBuf, // absolute path
     pub metadata: Metadata,

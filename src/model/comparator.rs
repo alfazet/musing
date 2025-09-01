@@ -38,7 +38,7 @@ impl TryFrom<Value> for Comparator {
     fn try_from(mut v: Value) -> Result<Self> {
         let map = v
             .as_object_mut()
-            .ok_or(anyhow!("a comparator must be a JSON map"))?;
+            .ok_or(anyhow!("a comparator must be a JSON object"))?;
         let tag: TagKey = map
             .remove("tag")
             .ok_or(anyhow!("key `tag` not found"))?

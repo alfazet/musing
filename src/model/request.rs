@@ -1,12 +1,12 @@
 use anyhow::{Result, anyhow, bail};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::path::PathBuf;
 use tokio::sync::oneshot;
 
 use crate::model::{
     comparator::Comparator,
     filter::{Filter, FilterExpr},
-    response::Response,
+    response::{JsonObject, Response},
     tag_key::TagKey,
 };
 
@@ -27,7 +27,6 @@ pub struct EnableArgs(pub String);
 pub enum DeviceRequestKind {
     Disable(DisableArgs),
     Enable(EnableArgs),
-    Devices,
 }
 
 pub struct ChangeVolumeArgs(pub i8);
@@ -47,7 +46,6 @@ pub enum PlaybackRequestKind {
 }
 
 pub struct AddToPlaylistArgs(pub PathBuf, pub PathBuf); // playlist, song
-pub struct FromFileArgs(pub PathBuf);
 pub struct ListSongsArgs(pub PathBuf);
 // playlist, range (inclusive), position
 pub struct LoadArgs(pub PathBuf, pub Option<(usize, usize)>, pub Option<usize>);
@@ -55,7 +53,6 @@ pub struct RemoveFromPlaylistArgs(pub PathBuf, pub usize); // playlist, position
 pub struct SaveArgs(pub PathBuf);
 pub enum PlaylistRequestKind {
     AddToPlaylist(AddToPlaylistArgs),
-    FromFile(FromFileArgs),
     ListSongs(ListSongsArgs),
     Load(LoadArgs),
     RemoveFromPlaylist(RemoveFromPlaylistArgs),
@@ -77,19 +74,13 @@ pub enum QueueRequestKind {
     Single,
 }
 
-pub enum StatusRequestKind {
-    Playlists,
-    Queue,
-    State,
-}
-
 pub enum RequestKind {
     Db(DbRequestKind),
     Device(DeviceRequestKind),
     Playback(PlaybackRequestKind),
     Playlist(PlaylistRequestKind),
     Queue(QueueRequestKind),
-    Status(StatusRequestKind),
+    State,
 }
 
 pub struct Request {
@@ -97,20 +88,20 @@ pub struct Request {
     pub tx_response: oneshot::Sender<Response>,
 }
 
-impl TryFrom<&mut Map<String, Value>> for LsArgs {
+impl TryFrom<&mut JsonObject> for LsArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let dir: PathBuf =
             serde_json::from_value(args.remove("dir").ok_or(anyhow!("key `dir` not found"))?)?;
         Ok(Self(dir))
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for MetadataArgs {
+impl TryFrom<&mut JsonObject> for MetadataArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let paths: Vec<PathBuf> = serde_json::from_value(
             args.remove("paths")
                 .ok_or(anyhow!("key `paths` not found"))?,
@@ -126,10 +117,10 @@ impl TryFrom<&mut Map<String, Value>> for MetadataArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for SelectArgs {
+impl TryFrom<&mut JsonObject> for SelectArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let filters: Vec<Box<dyn Filter>> =
             serde_json::from_value::<Vec<Value>>(args.remove("filters").unwrap_or_default())?
                 .into_iter()
@@ -146,10 +137,10 @@ impl TryFrom<&mut Map<String, Value>> for SelectArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for UniqueArgs {
+impl TryFrom<&mut JsonObject> for UniqueArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let tag: TagKey = serde_json::from_value::<String>(
             args.remove("tag").ok_or(anyhow!("key `tag` not found"))?,
         )?
@@ -172,10 +163,10 @@ impl TryFrom<&mut Map<String, Value>> for UniqueArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for DisableArgs {
+impl TryFrom<&mut JsonObject> for DisableArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let device: String = serde_json::from_value(
             args.remove("device")
                 .ok_or(anyhow!("key `device` not found"))?,
@@ -185,10 +176,10 @@ impl TryFrom<&mut Map<String, Value>> for DisableArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for EnableArgs {
+impl TryFrom<&mut JsonObject> for EnableArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let device: String = serde_json::from_value(
             args.remove("device")
                 .ok_or(anyhow!("key `device` not found"))?,
@@ -198,10 +189,10 @@ impl TryFrom<&mut Map<String, Value>> for EnableArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for SeekArgs {
+impl TryFrom<&mut JsonObject> for SeekArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let seconds: i64 = serde_json::from_value(
             args.remove("seconds")
                 .ok_or(anyhow!("key `seconds` not found"))?,
@@ -211,10 +202,10 @@ impl TryFrom<&mut Map<String, Value>> for SeekArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for ChangeVolumeArgs {
+impl TryFrom<&mut JsonObject> for ChangeVolumeArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let delta: i8 = serde_json::from_value(
             args.remove("delta")
                 .ok_or(anyhow!("key `delta` not found"))?,
@@ -224,10 +215,10 @@ impl TryFrom<&mut Map<String, Value>> for ChangeVolumeArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for SetVolumeArgs {
+impl TryFrom<&mut JsonObject> for SetVolumeArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let volume: u8 = serde_json::from_value(
             args.remove("volume")
                 .ok_or(anyhow!("key `volume` not found"))?,
@@ -237,10 +228,10 @@ impl TryFrom<&mut Map<String, Value>> for SetVolumeArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for SpeedArgs {
+impl TryFrom<&mut JsonObject> for SpeedArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let speed: u16 = serde_json::from_value(
             args.remove("speed")
                 .ok_or(anyhow!("key `speed` not found"))?,
@@ -250,10 +241,10 @@ impl TryFrom<&mut Map<String, Value>> for SpeedArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for AddToPlaylistArgs {
+impl TryFrom<&mut JsonObject> for AddToPlaylistArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let playlist: PathBuf = serde_json::from_value(
             args.remove("playlist")
                 .ok_or(anyhow!("key `playlist` not found"))?,
@@ -265,21 +256,10 @@ impl TryFrom<&mut Map<String, Value>> for AddToPlaylistArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for FromFileArgs {
+impl TryFrom<&mut JsonObject> for ListSongsArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
-        let path: PathBuf =
-            serde_json::from_value(args.remove("path").ok_or(anyhow!("key `path` not found"))?)?;
-
-        Ok(Self(path))
-    }
-}
-
-impl TryFrom<&mut Map<String, Value>> for ListSongsArgs {
-    type Error = anyhow::Error;
-
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let playlist: PathBuf = serde_json::from_value(
             args.remove("playlist")
                 .ok_or(anyhow!("key `playlist` not found"))?,
@@ -289,10 +269,10 @@ impl TryFrom<&mut Map<String, Value>> for ListSongsArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for LoadArgs {
+impl TryFrom<&mut JsonObject> for LoadArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let playlist: PathBuf = serde_json::from_value(
             args.remove("playlist")
                 .ok_or(anyhow!("key `playlist` not found"))?,
@@ -307,10 +287,10 @@ impl TryFrom<&mut Map<String, Value>> for LoadArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for SaveArgs {
+impl TryFrom<&mut JsonObject> for SaveArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let path: PathBuf =
             serde_json::from_value(args.remove("path").ok_or(anyhow!("key `path` not found"))?)?;
 
@@ -318,10 +298,10 @@ impl TryFrom<&mut Map<String, Value>> for SaveArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for RemoveFromPlaylistArgs {
+impl TryFrom<&mut JsonObject> for RemoveFromPlaylistArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let playlist: PathBuf = serde_json::from_value(
             args.remove("playlist")
                 .ok_or(anyhow!("key `playlist` not found"))?,
@@ -333,10 +313,10 @@ impl TryFrom<&mut Map<String, Value>> for RemoveFromPlaylistArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for AddToQueueArgs {
+impl TryFrom<&mut JsonObject> for AddToQueueArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let paths: Vec<PathBuf> = serde_json::from_value(
             args.remove("paths")
                 .ok_or(anyhow!("key `paths` not found"))?,
@@ -347,10 +327,10 @@ impl TryFrom<&mut Map<String, Value>> for AddToQueueArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for PlayArgs {
+impl TryFrom<&mut JsonObject> for PlayArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let id: u32 =
             serde_json::from_value(args.remove("id").ok_or(anyhow!("key `id` not found"))?)?;
 
@@ -358,10 +338,10 @@ impl TryFrom<&mut Map<String, Value>> for PlayArgs {
     }
 }
 
-impl TryFrom<&mut Map<String, Value>> for RemoveFromQueueArgs {
+impl TryFrom<&mut JsonObject> for RemoveFromQueueArgs {
     type Error = anyhow::Error;
 
-    fn try_from(args: &mut Map<String, Value>) -> Result<Self> {
+    fn try_from(args: &mut JsonObject) -> Result<Self> {
         let ids: Vec<u32> =
             serde_json::from_value(args.remove("ids").ok_or(anyhow!("key `ids` not found"))?)?;
 
@@ -378,12 +358,11 @@ impl TryFrom<&str> for RequestKind {
         use PlaybackRequestKind as Playback;
         use PlaylistRequestKind as Playlist;
         use QueueRequestKind as Queue;
-        use StatusRequestKind as Status;
 
         let mut temp = serde_json::from_str::<Value>(s)?;
         let map = temp
             .as_object_mut()
-            .ok_or(anyhow!("a request must be a JSON map"))?;
+            .ok_or(anyhow!("a request must be a JSON object"))?;
         let kind: String =
             serde_json::from_value(map.remove("kind").ok_or(anyhow!("key `kind` not found"))?)?;
         let kind = match kind.as_str() {
@@ -395,8 +374,6 @@ impl TryFrom<&str> for RequestKind {
 
             "disable" => RequestKind::Device(Device::Disable(map.try_into()?)),
             "enable" => RequestKind::Device(Device::Enable(map.try_into()?)),
-            "devices" => RequestKind::Device(Device::Devices),
-
             "changevol" => RequestKind::Playback(Playback::ChangeVolume(map.try_into()?)),
             "gapless" => RequestKind::Playback(Playback::Gapless),
             "pause" => RequestKind::Playback(Playback::Pause),
@@ -408,7 +385,6 @@ impl TryFrom<&str> for RequestKind {
             "toggle" => RequestKind::Playback(Playback::Toggle),
 
             "addplaylist" => RequestKind::Playlist(Playlist::AddToPlaylist(map.try_into()?)),
-            "fromfile" => RequestKind::Playlist(Playlist::FromFile(map.try_into()?)),
             "listsongs" => RequestKind::Playlist(Playlist::ListSongs(map.try_into()?)),
             "load" => RequestKind::Playlist(Playlist::Load(map.try_into()?)),
             "removeplaylist" => {
@@ -426,9 +402,7 @@ impl TryFrom<&str> for RequestKind {
             "sequential" => RequestKind::Queue(Queue::Sequential),
             "single" => RequestKind::Queue(Queue::Single),
 
-            "playlists" => RequestKind::Status(Status::Playlists),
-            "queue" => RequestKind::Status(Status::Queue),
-            "state" => RequestKind::Status(Status::State),
+            "state" => RequestKind::State,
 
             other => bail!("invalid value of key `kind`: `{}`", other),
         };

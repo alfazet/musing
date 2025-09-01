@@ -32,7 +32,7 @@ enum PlaybackState {
     Paused,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Playback {
     state: PlaybackState,
     volume: Arc<RwLock<Volume>>,
@@ -105,7 +105,7 @@ impl Audio {
     }
 
     // use either the system's default audio output device or the provided one
-    pub fn with_default(mut self, default_device_name: Option<&String>) -> Result<Self> {
+    pub fn try_with_default(mut self, default_device_name: Option<&String>) -> Result<Self> {
         if let Some(name) = default_device_name {
             let device = audio_utils::device_by_name(name)?;
             self.add_device(device, name)?;
@@ -304,7 +304,7 @@ impl Audio {
         self.playback.gapless
     }
 
-    pub fn state(&self) -> String {
+    pub fn playback(&self) -> String {
         match self.playback.state {
             PlaybackState::Stopped => "stopped",
             PlaybackState::Playing => "playing",

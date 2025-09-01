@@ -19,10 +19,12 @@ use crate::{
     },
 };
 
+#[derive(Debug)]
 struct ClientHandler {
     stream: BufReader<TcpStream>,
 }
 
+#[derive(Debug)]
 struct Server {
     port: u16,
 }
@@ -44,6 +46,7 @@ impl ClientHandler {
         self.stream.write_u32(bytes.len() as u32).await?;
         self.stream.write_all(bytes).await?;
 
+        let mut prev_state = Response::default();
         loop {
             // read the length (4 bytes, big endian)
             let res = tokio::select! {
@@ -70,11 +73,25 @@ impl ClientHandler {
             // respond
             let response = match RequestKind::try_from(s.as_str()) {
                 Ok(kind) => {
+                    let is_state = matches!(kind, RequestKind::State);
                     let (tx_response, rx_response) = oneshot::channel();
                     let _ = tx_request.send(Request { kind, tx_response });
-                    rx_response.await?.into_json_string()?
+                    let response = rx_response.await?;
+
+                    // respond to a "state" request with a diff -
+                    // we respond only with the keys whose values have changed since
+                    // the last time this client requested to get the state
+                    if is_state {
+                        let diff = response.diff_with(&prev_state);
+                        prev_state = response;
+
+                        diff
+                    } else {
+                        response
+                    }
+                    .to_string()
                 }
-                Err(e) => Response::new_err(e.to_string()).into_json_string()?,
+                Err(e) => Response::new_err(e.to_string()).to_string(),
             };
             let bytes = response.as_bytes();
             self.stream.write_u32(bytes.len() as u32).await?;

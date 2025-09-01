@@ -33,7 +33,7 @@ enum QueueMode {
     Random(Random),
 }
 
-#[derive(Clone, Decode, Default, Encode)]
+#[derive(Clone, Debug, Decode, Default, Encode)]
 pub struct Queue {
     list: Vec<Entry>,
     pos: Option<usize>,

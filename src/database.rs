@@ -15,7 +15,6 @@ use std::{
 use crate::{
     constants,
     model::{
-        playlist::Playlist,
         queue::Entry,
         request::{LsArgs, MetadataArgs, SelectArgs, UniqueArgs},
         response::Response,
@@ -23,17 +22,18 @@ use crate::{
     },
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct DataRow {
     song: Song,
     pending_delete: bool,
 }
 
+#[derive(Debug)]
 pub struct Database {
     music_dir: PathBuf,
     playlist_dir: PathBuf,
     data_rows: Vec<DataRow>,
-    playlists: HashMap<PathBuf, Playlist>, // keys are absolute paths
+    playlists: HashSet<PathBuf>,
     last_update: SystemTime,
 }
 
@@ -57,9 +57,7 @@ impl Database {
         rows
     }
 
-    fn build_playlists(
-        playlist_dir: impl AsRef<Path> + Into<PathBuf>,
-    ) -> HashMap<PathBuf, Playlist> {
+    fn build_playlists(playlist_dir: impl AsRef<Path> + Into<PathBuf>) -> HashSet<PathBuf> {
         let playlist_files = db_utils::walk_dir(
             playlist_dir.as_ref(),
             SystemTime::UNIX_EPOCH,
@@ -67,13 +65,7 @@ impl Database {
         )
         .unwrap_or_default();
 
-        playlist_files
-            .into_iter()
-            .filter_map(|path| match Playlist::try_new(&path) {
-                Ok(playlist) => Some((path, playlist)),
-                Err(_) => None,
-            })
-            .collect()
+        playlist_files.into_iter().collect()
     }
 
     pub fn try_new(
@@ -108,24 +100,23 @@ impl Database {
         db_utils::binary_search_by_path(&self.data_rows, &abs_path).map(|_| abs_path)
     }
 
-    pub fn playlists(&self) -> &HashMap<PathBuf, Playlist> {
+    pub fn playlists(&self) -> &HashSet<PathBuf> {
         &self.playlists
     }
 
-    pub fn load_playlist(&self, path: impl AsRef<Path>) -> Option<&Playlist> {
+    pub fn load_playlist(&self, path: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
         let abs_path = db_utils::to_abs_path(&self.playlist_dir, path.as_ref());
-        self.playlists.get(&abs_path)
-    }
+        let file = File::open(&abs_path)?;
+        let stream = BufReader::new(file);
+        // lines starting with `#` are comments in m3u files
+        let playlist: Vec<_> = stream
+            .lines()
+            .map_while(Result::ok)
+            .filter(|l| !l.starts_with("#"))
+            .map(|l| l.into())
+            .collect();
 
-    pub fn add_playlist_from_file(&mut self, path: impl AsRef<Path> + Into<PathBuf>) -> Response {
-        let abs_path = db_utils::to_abs_path(&self.playlist_dir, path.as_ref());
-        let playlist = match Playlist::try_new(&abs_path) {
-            Ok(playlist) => playlist,
-            Err(e) => return Response::new_err(e.to_string()),
-        };
-        self.playlists.insert(abs_path, playlist);
-
-        Response::new_ok()
+        Ok(playlist)
     }
 
     pub fn add_to_playlist(
@@ -140,13 +131,6 @@ impl Database {
             ));
         };
         let abs_playlist_path = db_utils::to_abs_path(&self.playlist_dir, playlist_path.as_ref());
-        // this unwrap is fine because we know that the path is absolute and
-        // points to somewhere within the music_dir
-        let rel_song_path = abs_song_path.strip_prefix(&self.music_dir).unwrap();
-        if let Some(playlist) = self.playlists.get_mut::<Path>(abs_playlist_path.as_ref()) {
-            // add the relative path because it's cross-platform
-            playlist.append(rel_song_path);
-        }
         let Ok(mut playlist_file) = OpenOptions::new()
             .append(true)
             .create(true)
@@ -157,6 +141,12 @@ impl Database {
                 abs_playlist_path.to_string_lossy()
             ));
         };
+        // we use relative song paths in playlist files, since that makes it cross-platform
+        // (absolute paths differ between Unix and Windows, relative ones don't)
+        //
+        // this unwrap is fine because we know that the path is absolute and
+        // points to somewhere within the music_dir
+        let rel_song_path = abs_song_path.strip_prefix(&self.music_dir).unwrap();
 
         playlist_file
             .write_all(rel_song_path.as_os_str().as_encoded_bytes())
@@ -177,15 +167,6 @@ impl Database {
                 abs_playlist_path.to_string_lossy()
             ));
         };
-        if let Some(playlist) = self.playlists.get_mut::<Path>(abs_playlist_path.as_ref())
-            && !playlist.remove(pos - 1)
-        {
-            return Response::new_err(format!(
-                "playlist `{}` has fewer than {} entries",
-                abs_playlist_path.to_string_lossy(),
-                pos
-            ));
-        }
         let new_content = content
             .lines()
             .enumerate()

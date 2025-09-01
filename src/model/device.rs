@@ -43,6 +43,7 @@ pub struct Device {
     state: DeviceState,
 }
 
+#[derive(Debug)]
 pub struct DeviceProxy {
     pub name: String,
     pub sample_rate: u32,

@@ -94,9 +94,9 @@ while True:
         playlist = input("playlist: ").strip()
         msg = json.dumps({"kind": "listsongs", "playlist": playlist})
     elif kind == "removeplaylist":
-        path = input("path: ").strip()
+        playlist = input("playlist: ").strip()
         pos = int(input("pos: ").strip())
-        msg = json.dumps({"kind": "removeplaylist", "path": path, "pos": pos})
+        msg = json.dumps({"kind": "removeplaylist", "playlist": playlist, "pos": pos})
     elif kind == "load":
         playlist = input("playlist: ").strip()
         range_l = int(input("range_l: ").strip())

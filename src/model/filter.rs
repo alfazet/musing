@@ -13,6 +13,7 @@ pub trait Filter: Send + Sync {
 pub struct FilterExpr(pub Vec<Box<dyn Filter>>);
 
 // matches iff the tag value matches the regex
+#[derive(Debug)]
 struct RegexFilter {
     tag: TagKey,
     regex: Regex,
@@ -39,7 +40,7 @@ impl TryFrom<Value> for Box<dyn Filter> {
     fn try_from(mut v: Value) -> Result<Self> {
         let map = v
             .as_object_mut()
-            .ok_or(anyhow!("a filter must be a JSON map"))?;
+            .ok_or(anyhow!("a filter must be a JSON object"))?;
         let kind = map.remove("kind").ok_or(anyhow!("key `kind` not found"))?;
         let tag: TagKey = map
             .remove("tag")
