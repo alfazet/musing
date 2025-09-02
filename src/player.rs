@@ -70,11 +70,11 @@ impl Player {
     }
 
     async fn playback_request(&mut self, req: request::PlaybackRequestKind) -> Response {
-        use request::{ChangeVolumeArgs, PlaybackRequestKind, SeekArgs, SetVolumeArgs, SpeedArgs};
+        use request::{PlaybackRequestKind, SeekArgs, SpeedArgs, VolumeArgs};
 
         match req {
-            PlaybackRequestKind::ChangeVolume(args) => {
-                let ChangeVolumeArgs(volume) = args;
+            PlaybackRequestKind::Volume(args) => {
+                let VolumeArgs(volume) = args;
                 self.audio.change_volume(volume);
 
                 Response::new_ok()
@@ -91,15 +91,9 @@ impl Player {
 
                 Response::new_ok()
             }
-            PlaybackRequestKind::SetVolume(args) => {
-                let SetVolumeArgs(volume) = args;
-                self.audio.set_volume(volume);
-
-                Response::new_ok()
-            }
             PlaybackRequestKind::Speed(args) => {
-                let SpeedArgs(speed) = args;
-                self.audio.set_speed(speed);
+                let SpeedArgs(delta) = args;
+                self.audio.change_speed(delta);
 
                 Response::new_ok()
             }
@@ -277,10 +271,10 @@ impl Player {
         let mut response = Response::new_ok()
             .with_item("devices", &devices)
             .with_item("gapless", &self.audio.gapless())
-            .with_item("mode", &self.queue.mode())
+            .with_item("playback_mode", &self.queue.mode())
             .with_item("playlists", &playlists)
             .with_item("queue", &queue)
-            .with_item("playback", &self.audio.playback())
+            .with_item("playback_state", &self.audio.playback_state())
             .with_item("speed", &self.audio.speed())
             .with_item("volume", &self.audio.volume());
         if let Some(timer) = self.audio.playback_timer().await {

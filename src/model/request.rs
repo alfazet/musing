@@ -7,7 +7,7 @@ use crate::model::{
     comparator::Comparator,
     filter::{Filter, FilterExpr},
     response::{JsonObject, Response},
-    tag_key::TagKey,
+    tag_key::{self, TagKey},
 };
 
 pub struct LsArgs(pub PathBuf);
@@ -29,20 +29,18 @@ pub enum DeviceRequestKind {
     Enable(EnableArgs),
 }
 
-pub struct ChangeVolumeArgs(pub i8);
+pub struct VolumeArgs(pub i8);
 pub struct SeekArgs(pub i64); // in seconds
-pub struct SetVolumeArgs(pub u8);
-pub struct SpeedArgs(pub u16);
+pub struct SpeedArgs(pub i16);
 pub enum PlaybackRequestKind {
-    ChangeVolume(ChangeVolumeArgs),
     Gapless,
     Pause,
     Resume,
     Seek(SeekArgs),
-    SetVolume(SetVolumeArgs),
     Speed(SpeedArgs),
     Stop,
     Toggle,
+    Volume(VolumeArgs),
 }
 
 pub struct AddToPlaylistArgs(pub PathBuf, pub PathBuf); // playlist, song
@@ -106,12 +104,15 @@ impl TryFrom<&mut JsonObject> for MetadataArgs {
             args.remove("paths")
                 .ok_or(anyhow!("key `paths` not found"))?,
         )?;
-        let tags: Vec<TagKey> = serde_json::from_value::<Vec<String>>(
-            args.remove("tags").ok_or(anyhow!("key `tags` not found"))?,
-        )?
-        .into_iter()
-        .map(|s| TagKey::try_from(s.as_str()))
-        .collect::<Result<_>>()?;
+        let tags: Vec<TagKey> = match args.remove("all_tags").and_then(|v| v.as_bool()) {
+            Some(all_tags) if all_tags => tag_key::all_tags(),
+            _ => serde_json::from_value::<Vec<String>>(
+                args.remove("tags").ok_or(anyhow!("key `tags` not found"))?,
+            )?
+            .into_iter()
+            .map(|s| TagKey::try_from(s.as_str()))
+            .collect::<Result<_>>()?,
+        };
 
         Ok(Self(paths, tags))
     }
@@ -202,7 +203,7 @@ impl TryFrom<&mut JsonObject> for SeekArgs {
     }
 }
 
-impl TryFrom<&mut JsonObject> for ChangeVolumeArgs {
+impl TryFrom<&mut JsonObject> for VolumeArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &mut JsonObject) -> Result<Self> {
@@ -215,29 +216,16 @@ impl TryFrom<&mut JsonObject> for ChangeVolumeArgs {
     }
 }
 
-impl TryFrom<&mut JsonObject> for SetVolumeArgs {
-    type Error = anyhow::Error;
-
-    fn try_from(args: &mut JsonObject) -> Result<Self> {
-        let volume: u8 = serde_json::from_value(
-            args.remove("volume")
-                .ok_or(anyhow!("key `volume` not found"))?,
-        )?;
-
-        Ok(Self(volume))
-    }
-}
-
 impl TryFrom<&mut JsonObject> for SpeedArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &mut JsonObject) -> Result<Self> {
-        let speed: u16 = serde_json::from_value(
-            args.remove("speed")
-                .ok_or(anyhow!("key `speed` not found"))?,
+        let delta: i16 = serde_json::from_value(
+            args.remove("delta")
+                .ok_or(anyhow!("key `delta` not found"))?,
         )?;
 
-        Ok(Self(speed))
+        Ok(Self(delta))
     }
 }
 
@@ -374,12 +362,11 @@ impl TryFrom<&str> for RequestKind {
 
             "disable" => RequestKind::Device(Device::Disable(map.try_into()?)),
             "enable" => RequestKind::Device(Device::Enable(map.try_into()?)),
-            "changevol" => RequestKind::Playback(Playback::ChangeVolume(map.try_into()?)),
+            "volume" => RequestKind::Playback(Playback::Volume(map.try_into()?)),
             "gapless" => RequestKind::Playback(Playback::Gapless),
             "pause" => RequestKind::Playback(Playback::Pause),
             "resume" => RequestKind::Playback(Playback::Resume),
             "seek" => RequestKind::Playback(Playback::Seek(map.try_into()?)),
-            "setvol" => RequestKind::Playback(Playback::SetVolume(map.try_into()?)),
             "speed" => RequestKind::Playback(Playback::Speed(map.try_into()?)),
             "stop" => RequestKind::Playback(Playback::Stop),
             "toggle" => RequestKind::Playback(Playback::Toggle),

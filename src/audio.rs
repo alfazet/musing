@@ -261,16 +261,26 @@ impl Audio {
         }
     }
 
-    pub fn set_speed(&mut self, new_speed: u16) {
-        *self.playback.speed.write().unwrap() = new_speed.into();
+    // TODO: rewrite these two functions when
+    // https://doc.rust-lang.org/std/primitive.u8.html#method.saturating_sub_signed
+    // stabilizes
+    pub fn change_speed(&mut self, delta: i16) {
+        // *self.playback.speed.write().unwrap() = new_speed.into();
+        let mut s_lock = self.playback.speed.write().unwrap();
+        let s: u16 = (*s_lock).into();
+        *s_lock = {
+            if delta < 0 {
+                s.saturating_sub(delta.unsigned_abs())
+            } else {
+                s.saturating_add(delta.unsigned_abs())
+            }
+        }
+        .into();
     }
 
     pub fn change_volume(&mut self, delta: i8) {
         let mut v_lock = self.playback.volume.write().unwrap();
         let v: u8 = (*v_lock).into();
-        // TODO: clean up when
-        // https://doc.rust-lang.org/std/primitive.u8.html#method.saturating_sub_signed
-        // stabilizes
         *v_lock = {
             if delta < 0 {
                 v.saturating_sub(delta.unsigned_abs())
@@ -279,10 +289,6 @@ impl Audio {
             }
         }
         .into();
-    }
-
-    pub fn set_volume(&mut self, new_v: u8) {
-        *self.playback.volume.write().unwrap() = new_v.into();
     }
 
     pub fn volume(&self) -> u8 {
@@ -304,7 +310,7 @@ impl Audio {
         self.playback.gapless
     }
 
-    pub fn playback(&self) -> String {
+    pub fn playback_state(&self) -> String {
         match self.playback.state {
             PlaybackState::Stopped => "stopped",
             PlaybackState::Playing => "playing",

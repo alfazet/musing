@@ -133,3 +133,10 @@ impl TryFrom<StandardTagKey> for TagKey {
         Self::try_from(enum_stringify!(s_key).to_lowercase().as_str())
     }
 }
+
+pub fn all_tags() -> Vec<TagKey> {
+    TAG_MAP
+        .values()
+        .filter_map(|std_key| TagKey::try_from(*std_key).ok())
+        .collect()
+}

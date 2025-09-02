@@ -339,6 +339,6 @@ mod decoder_utils {
     // source: https://www.dr-lex.be/info-stuff/volumecontrols.html
     pub fn volume_to_mult(v: Volume) -> BaseSample {
         let v: u8 = v.into();
-        (0.07 * (v as BaseSample)).exp() / 1000.0
+        (((0.07 * (v as BaseSample)).exp() - 1.0) / 1000.0).max(0.0)
     }
 }
