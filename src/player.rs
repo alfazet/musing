@@ -241,7 +241,6 @@ impl Player {
     }
 
     async fn state_request(&self) -> Response {
-        // let playlists: Vec<_> = self.database.playlists().collect();
         let playlists = self.database.playlists();
         let queue: Vec<_> = self
             .queue
@@ -283,7 +282,10 @@ impl Player {
                 .with_item("duration", &timer.duration);
         }
         if let Some(current) = self.queue.current() {
-            response = response.with_item("current", &current.id)
+            let mut object = JsonObject::new();
+            object.insert("id".into(), current.id.into());
+            object.insert("path".into(), current.path.to_string_lossy().into());
+            response = response.with_item("current", &object);
         }
 
         response
@@ -395,12 +397,12 @@ fn add_to_queue<'a>(
     let mut not_found = Vec::new();
     let range = match range {
         Some((start, end)) => {
-            let start = start.min(paths.len() - 1);
-            let end = end.clamp(start, paths.len() - 1);
+            let start = start.min(paths.len().saturating_sub(1));
+            let end = end.clamp(start, paths.len().saturating_sub(1));
 
             start..=end
         }
-        None => 0..=(paths.len() - 1),
+        None => 0..=(paths.len().saturating_sub(1)),
     };
     for (offset, path) in paths[range].iter().enumerate() {
         match database.try_to_abs_path(path) {

@@ -59,8 +59,8 @@ impl Random {
     pub fn new(mut ids: Vec<u32>) -> Self {
         let mut rng = Rng(ids.len());
         // Fisher-Yates shuffle
-        for i in 0..(ids.len() - 1) {
-            let j = rng.next_usize(i, ids.len() - 1);
+        for i in 0..(ids.len().saturating_sub(1)) {
+            let j = rng.next_usize(i, ids.len().saturating_sub(1));
             ids.swap(i, j);
         }
 
@@ -103,7 +103,7 @@ impl Queue {
     pub fn move_next(&mut self) -> Option<&Entry> {
         match &mut self.mode {
             QueueMode::Sequential => match &mut self.pos {
-                Some(pos) if *pos < self.list.len() - 1 => *pos += 1,
+                Some(pos) if *pos < self.list.len().saturating_sub(1) => *pos += 1,
                 None if !self.list.is_empty() => self.pos = Some(0),
                 _ => self.pos = None,
             },
@@ -133,7 +133,7 @@ impl Queue {
     pub fn move_prev(&mut self) -> Option<&Entry> {
         match &mut self.pos {
             Some(pos) if *pos > 0 => *pos -= 1,
-            None if !self.list.is_empty() => self.pos = Some(self.list.len() - 1),
+            None if !self.list.is_empty() => self.pos = Some(self.list.len().saturating_sub(1)),
             _ => self.pos = None,
         };
 
@@ -172,7 +172,7 @@ impl Queue {
                 ids.push(id);
             } else {
                 // add to a random position in constant time
-                let random_pos = rng.next_usize(0, ids.len() - 1);
+                let random_pos = rng.next_usize(0, ids.len().saturating_sub(1));
                 let temp = mem::replace(&mut ids[random_pos], id);
                 ids.push(temp);
             }
@@ -193,7 +193,7 @@ impl Queue {
                     return true;
                 } else {
                     if cur_pos > removed_pos {
-                        self.pos = Some(cur_pos - 1);
+                        self.pos = Some(cur_pos.saturating_sub(1));
                     }
                     return false;
                 }
@@ -211,7 +211,7 @@ impl Queue {
     }
 
     pub fn start_random(&mut self) {
-        let not_played_ids: Vec<_> = self
+        let mut not_played_ids: Vec<_> = self
             .list
             .iter()
             .filter(|entry| {
@@ -223,6 +223,10 @@ impl Queue {
             })
             .map(|entry| entry.id)
             .collect();
+        // if we've already played every song, start again
+        if not_played_ids.is_empty() {
+            not_played_ids = self.list.iter().map(|entry| entry.id).collect();
+        }
         self.mode = QueueMode::Random(Random::new(not_played_ids));
     }
 

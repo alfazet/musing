@@ -170,7 +170,7 @@ impl Database {
         let new_content = content
             .lines()
             .enumerate()
-            .filter_map(|(i, line)| if i + 1 != pos { Some(line) } else { None })
+            .filter_map(|(i, line)| if i != pos { Some(line) } else { None })
             .collect::<Vec<_>>()
             .join("\n")
             + "\n";
@@ -245,7 +245,7 @@ impl Database {
 
     // get values of `tags` for songs in `paths`
     pub fn metadata(&self, MetadataArgs(paths, tags): MetadataArgs) -> Response {
-        let values: Vec<_> = paths
+        let metadata: Vec<_> = paths
             .into_par_iter()
             .map(|path| {
                 let abs_path = db_utils::to_abs_path(&self.music_dir, path);
@@ -260,7 +260,7 @@ impl Database {
             })
             .collect();
 
-        Response::new_ok().with_item("values", &values)
+        Response::new_ok().with_item("metadata", &metadata)
     }
 
     // get paths of songs matching `filter_expr`, sorted by the comparators in `sort_by`
