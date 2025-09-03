@@ -282,10 +282,7 @@ impl Player {
                 .with_item("duration", &timer.duration);
         }
         if let Some(current) = self.queue.current() {
-            let mut object = JsonObject::new();
-            object.insert("id".into(), current.id.into());
-            object.insert("path".into(), current.path.to_string_lossy().into());
-            response = response.with_item("current", &object);
+            response = response.with_item("current", &self.queue.find_by_id(current.id));
         }
 
         response

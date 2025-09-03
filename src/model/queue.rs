@@ -69,7 +69,7 @@ impl Random {
 }
 
 impl Queue {
-    fn find_by_id(&self, id: u32) -> Option<usize> {
+    pub fn find_by_id(&self, id: u32) -> Option<usize> {
         self.list.iter().position(|entry| entry.id == id)
     }
 
