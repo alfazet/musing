@@ -277,9 +277,10 @@ impl Player {
             .with_item("speed", &self.audio.speed())
             .with_item("volume", &self.audio.volume());
         if let Some(timer) = self.audio.playback_timer().await {
-            response = response
-                .with_item("elapsed", &timer.elapsed)
-                .with_item("duration", &timer.duration);
+            let mut object = JsonObject::new();
+            object.insert("elapsed".into(), timer.elapsed.into());
+            object.insert("duration".into(), timer.duration.into());
+            response = response.with_item("timer", &object);
         }
         if let Some(current) = self.queue.current() {
             response = response.with_item("current", &self.queue.find_by_id(current.id));
