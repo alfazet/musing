@@ -254,8 +254,17 @@ impl Database {
                         let value = self.data_rows[i].song.metadata.get(tag).into();
                         (tag.to_string(), value)
                     });
+                    let mut map = Map::from_iter(data);
+                    map.insert(
+                        "duration".to_string(),
+                        self.data_rows[i]
+                            .song
+                            .duration
+                            .map(|d| d.to_string())
+                            .into(),
+                    );
 
-                    Some(Map::from_iter(data))
+                    Some(map)
                 })
             })
             .collect();

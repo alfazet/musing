@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::{
     collections::HashMap,
     fs::File,
@@ -22,6 +22,7 @@ pub struct Metadata {
 pub struct Song {
     pub path: PathBuf, // absolute path
     pub metadata: Metadata,
+    pub duration: Option<u64>, // in seconds
 }
 
 #[derive(Debug)]
@@ -68,9 +69,20 @@ impl Song {
             .get()
             .map(|m| m.current().map(Metadata::from).unwrap_or_default())
             .unwrap_or_default();
+        let demuxer = demuxer(&path, false)?;
+        let track = demuxer.default_track().ok_or(anyhow!(
+            "no audio track found in `{}`",
+            path.as_ref().to_string_lossy()
+        ))?;
+        let duration = match (&track.codec_params.time_base, &track.codec_params.n_frames) {
+            (Some(tb), Some(n)) => Some(tb.calc_time(*n).seconds),
+            _ => None,
+        };
+
         let song = Self {
             path: path.into(),
             metadata: metadata_container.merge(metadata_probe),
+            duration,
         };
 
         Ok(song)

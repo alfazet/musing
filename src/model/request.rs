@@ -92,6 +92,7 @@ impl TryFrom<&mut JsonObject> for LsArgs {
     fn try_from(args: &mut JsonObject) -> Result<Self> {
         let dir: PathBuf =
             serde_json::from_value(args.remove("dir").ok_or(anyhow!("key `dir` not found"))?)?;
+
         Ok(Self(dir))
     }
 }

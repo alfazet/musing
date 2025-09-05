@@ -167,10 +167,12 @@ impl Decoder {
         self.decoder.reset();
     }
 
-    fn stop(&self) {
+    fn stop(&mut self) {
         for proxy in self.device_proxies.iter() {
             let _ = proxy.0.tx_sample.send(BaseSample::NAN);
         }
+        self.timer.elapsed = 0;
+        self.timer.duration = 0;
     }
 
     // true -> stop the decoder

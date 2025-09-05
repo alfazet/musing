@@ -223,6 +223,7 @@ impl Player {
                 let RemoveFromQueueArgs(queue_ids) = args;
                 for queue_id in queue_ids {
                     if self.queue.remove(queue_id) {
+                        self.queue.reset_pos();
                         self.audio.stop();
                     }
                 }
@@ -266,8 +267,15 @@ impl Player {
                 object
             })
             .collect();
+        let (elapsed, duration) = match self.audio.playback_timer().await {
+            Some(t) => (t.elapsed, t.duration),
+            None => (0, 0),
+        };
+        let mut timer = JsonObject::new();
+        timer.insert("elapsed".into(), elapsed.into());
+        timer.insert("duration".into(), duration.into());
 
-        let mut response = Response::new_ok()
+        Response::new_ok()
             .with_item("devices", &devices)
             .with_item("gapless", &self.audio.gapless())
             .with_item("playback_mode", &self.queue.mode())
@@ -275,18 +283,15 @@ impl Player {
             .with_item("queue", &queue)
             .with_item("playback_state", &self.audio.playback_state())
             .with_item("speed", &self.audio.speed())
-            .with_item("volume", &self.audio.volume());
-        if let Some(timer) = self.audio.playback_timer().await {
-            let mut object = JsonObject::new();
-            object.insert("elapsed".into(), timer.elapsed.into());
-            object.insert("duration".into(), timer.duration.into());
-            response = response.with_item("timer", &object);
-        }
-        if let Some(current) = self.queue.current() {
-            response = response.with_item("current", &self.queue.find_by_id(current.id));
-        }
-
-        response
+            .with_item("volume", &self.audio.volume())
+            .with_item("timer", &timer)
+            .with_item(
+                "current",
+                &self
+                    .queue
+                    .current()
+                    .map(|cur| self.queue.find_by_id(cur.id)),
+            )
     }
 
     async fn handle_request(&mut self, req: RequestKind) -> Response {
