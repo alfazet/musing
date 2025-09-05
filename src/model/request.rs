@@ -123,17 +123,20 @@ impl TryFrom<&mut JsonObject> for SelectArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &mut JsonObject) -> Result<Self> {
-        let filters: Vec<Box<dyn Filter>> =
-            serde_json::from_value::<Vec<Value>>(args.remove("filters").unwrap_or_default())?
-                .into_iter()
-                .map(|v| v.try_into())
-                .collect::<Result<_>>()?;
+        let filters: Vec<Box<dyn Filter>> = serde_json::from_value::<Vec<Value>>(
+            args.remove("filters").unwrap_or(Value::Array(Vec::new())),
+        )?
+        .into_iter()
+        .map(|v| v.try_into())
+        .collect::<Result<_>>()?;
 
-        let comparators: Vec<Comparator> =
-            serde_json::from_value::<Vec<Value>>(args.remove("comparators").unwrap_or_default())?
-                .into_iter()
-                .map(|v| v.try_into())
-                .collect::<Result<_>>()?;
+        let comparators: Vec<Comparator> = serde_json::from_value::<Vec<Value>>(
+            args.remove("comparators")
+                .unwrap_or(Value::Array(Vec::new())),
+        )?
+        .into_iter()
+        .map(|v| v.try_into())
+        .collect::<Result<_>>()?;
 
         Ok(Self(FilterExpr(filters), comparators))
     }
@@ -149,17 +152,19 @@ impl TryFrom<&mut JsonObject> for UniqueArgs {
         .as_str()
         .try_into()?;
 
-        let filters: Vec<Box<dyn Filter>> =
-            serde_json::from_value::<Vec<Value>>(args.remove("filters").unwrap_or_default())?
-                .into_iter()
-                .map(|v| v.try_into())
-                .collect::<Result<_>>()?;
+        let filters: Vec<Box<dyn Filter>> = serde_json::from_value::<Vec<Value>>(
+            args.remove("filters").unwrap_or(Value::Array(Vec::new())),
+        )?
+        .into_iter()
+        .map(|v| v.try_into())
+        .collect::<Result<_>>()?;
 
-        let group_by: Vec<TagKey> =
-            serde_json::from_value::<Vec<String>>(args.remove("group_by").unwrap_or_default())?
-                .into_iter()
-                .map(|s| TagKey::try_from(s.as_str()))
-                .collect::<Result<_>>()?;
+        let group_by: Vec<TagKey> = serde_json::from_value::<Vec<String>>(
+            args.remove("group_by").unwrap_or(Value::Array(Vec::new())),
+        )?
+        .into_iter()
+        .map(|s| TagKey::try_from(s.as_str()))
+        .collect::<Result<_>>()?;
 
         Ok(Self(tag, FilterExpr(filters), group_by))
     }
