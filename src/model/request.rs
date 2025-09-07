@@ -12,13 +12,16 @@ use crate::model::{
 
 pub struct LsArgs(pub PathBuf);
 pub struct MetadataArgs(pub Vec<PathBuf>, pub Vec<TagKey>);
-pub struct SelectArgs(pub FilterExpr, pub Vec<Comparator>);
-pub struct UniqueArgs(pub TagKey, pub FilterExpr, pub Vec<TagKey>);
+pub struct SelectArgs(
+    pub Vec<TagKey>,
+    pub FilterExpr,
+    pub Vec<TagKey>,
+    pub Vec<Comparator>,
+);
 pub enum DbRequestKind {
     Ls(LsArgs),
     Metadata(MetadataArgs),
     Select(SelectArgs),
-    Unique(UniqueArgs),
     Update,
 }
 
@@ -123,34 +126,15 @@ impl TryFrom<&mut JsonObject> for SelectArgs {
     type Error = anyhow::Error;
 
     fn try_from(args: &mut JsonObject) -> Result<Self> {
-        let filters: Vec<Box<dyn Filter>> = serde_json::from_value::<Vec<Value>>(
-            args.remove("filters").unwrap_or(Value::Array(Vec::new())),
-        )?
-        .into_iter()
-        .map(|v| v.try_into())
-        .collect::<Result<_>>()?;
-
-        let comparators: Vec<Comparator> = serde_json::from_value::<Vec<Value>>(
-            args.remove("comparators")
-                .unwrap_or(Value::Array(Vec::new())),
-        )?
-        .into_iter()
-        .map(|v| v.try_into())
-        .collect::<Result<_>>()?;
-
-        Ok(Self(FilterExpr(filters), comparators))
-    }
-}
-
-impl TryFrom<&mut JsonObject> for UniqueArgs {
-    type Error = anyhow::Error;
-
-    fn try_from(args: &mut JsonObject) -> Result<Self> {
-        let tag: TagKey = serde_json::from_value::<String>(
-            args.remove("tag").ok_or(anyhow!("key `tag` not found"))?,
-        )?
-        .as_str()
-        .try_into()?;
+        let tags: Vec<TagKey> = match args.remove("all_tags").and_then(|v| v.as_bool()) {
+            Some(all_tags) if all_tags => tag_key::all_tags(),
+            _ => serde_json::from_value::<Vec<String>>(
+                args.remove("tags").ok_or(anyhow!("key `tags` not found"))?,
+            )?
+            .into_iter()
+            .map(|s| TagKey::try_from(s.as_str()))
+            .collect::<Result<_>>()?,
+        };
 
         let filters: Vec<Box<dyn Filter>> = serde_json::from_value::<Vec<Value>>(
             args.remove("filters").unwrap_or(Value::Array(Vec::new())),
@@ -166,7 +150,15 @@ impl TryFrom<&mut JsonObject> for UniqueArgs {
         .map(|s| TagKey::try_from(s.as_str()))
         .collect::<Result<_>>()?;
 
-        Ok(Self(tag, FilterExpr(filters), group_by))
+        let comparators: Vec<Comparator> = serde_json::from_value::<Vec<Value>>(
+            args.remove("comparators")
+                .unwrap_or(Value::Array(Vec::new())),
+        )?
+        .into_iter()
+        .map(|v| v.try_into())
+        .collect::<Result<_>>()?;
+
+        Ok(Self(tags, FilterExpr(filters), group_by, comparators))
     }
 }
 
@@ -363,7 +355,6 @@ impl TryFrom<&str> for RequestKind {
             "ls" => RequestKind::Db(Db::Ls(map.try_into()?)),
             "metadata" => RequestKind::Db(Db::Metadata(map.try_into()?)),
             "select" => RequestKind::Db(Db::Select(map.try_into()?)),
-            "unique" => RequestKind::Db(Db::Unique(map.try_into()?)),
             "update" => RequestKind::Db(Db::Update),
 
             "disable" => RequestKind::Device(Device::Disable(map.try_into()?)),

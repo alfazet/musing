@@ -44,7 +44,6 @@ impl Player {
                     DbRequestKind::Ls(args) => self.database.ls(args),
                     DbRequestKind::Metadata(args) => self.database.metadata(args),
                     DbRequestKind::Select(args) => self.database.select(args),
-                    DbRequestKind::Unique(args) => self.database.unique(args),
                     DbRequestKind::Update => self.database.update(),
                 };
                 let _ = tx.send(response);

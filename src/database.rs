@@ -16,7 +16,7 @@ use crate::{
     constants,
     model::{
         queue::Entry,
-        request::{LsArgs, MetadataArgs, SelectArgs, UniqueArgs},
+        request::{LsArgs, MetadataArgs, SelectArgs},
         response::Response,
         song::{Metadata, Song},
     },
@@ -272,8 +272,9 @@ impl Database {
         Response::new_ok().with_item("metadata", &metadata)
     }
 
-    // get paths of songs matching `filter_expr`, sorted by the comparators in `sort_by`
-    pub fn select(&self, SelectArgs(filter_expr, sort_by): SelectArgs) -> Response {
+    // get paths of songs (together with their `tags` metadata), matching `filter_expr`
+    // grouped by tags in `group_by` with each group sorted by tags in `sort_by`
+    pub fn select(&self, SelectArgs(tags, filter_expr, group_by, sort_by): SelectArgs) -> Response {
         let compare = |lhs: &Metadata, rhs: &Metadata| -> Ordering {
             sort_by
                 .iter()
@@ -282,47 +283,46 @@ impl Database {
                 .unwrap_or(Ordering::Equal)
         };
 
+        let mut groups = HashMap::new();
         let mut filtered: Vec<_> = self
             .data_rows
             .par_iter()
             .filter(|row| filter_expr.evaluate(&row.song))
             .collect();
         filtered.par_sort_unstable_by(|lhs, rhs| compare(&lhs.song.metadata, &rhs.song.metadata));
-        let paths: Vec<_> = filtered.into_par_iter().map(|row| &row.song.path).collect();
 
-        Response::new_ok().with_item("paths", &paths)
-    }
-
-    // get unique values of `tag` among songs matching `filter_expr`, grouped by tags in `group_by`
-    pub fn unique(&self, UniqueArgs(tag, filter_expr, group_by): UniqueArgs) -> Response {
-        let mut groups = HashMap::new();
-        let filtered = self
-            .data_rows
-            .iter()
-            .filter(|row| filter_expr.evaluate(&row.song))
-            .map(|row| &row.song.metadata);
-        for meta in filtered {
+        for row in filtered {
+            let song = &row.song;
             let combination: Vec<_> = group_by
                 .iter()
-                .map(|group_tag| meta.get(group_tag))
+                .map(|group_tag| song.metadata.get(group_tag))
                 .collect();
+
+            let make_song_data = || {
+                let mut song_data: Vec<_> = tags
+                    .iter()
+                    .map(|tag| song.metadata.get(tag).map(String::from))
+                    .collect();
+                song_data.push(Some(song.path.to_string_lossy().into_owned()));
+
+                song_data
+            };
             groups
                 .entry(combination)
-                .and_modify(|set: &mut HashSet<_>| {
-                    set.insert(meta.get(&tag));
+                .and_modify(|songs: &mut Vec<_>| {
+                    songs.push(make_song_data());
                 })
-                .or_insert([meta.get(&tag)].into());
+                .or_insert([make_song_data()].into());
         }
         let values: Vec<_> = groups
             .into_iter()
             .map(|(combination, values)| {
-                let data = group_by
+                let group_by_data = group_by
                     .iter()
                     .map(|tag_key| tag_key.to_string())
                     .zip(combination.into_iter().map(|value| value.into()));
-                let mut json_map = Map::from_iter(data);
-                let values: Vec<_> = values.into_iter().collect();
-                json_map.insert(tag.to_string(), values.into());
+                let mut json_map = Map::from_iter(group_by_data);
+                json_map.insert("data".into(), values.into());
 
                 json_map
             })
@@ -447,9 +447,9 @@ mod db_utils {
         let is_ok = move |path: &Path| -> bool {
             if let Some(ext) = path.extension().and_then(|ext| ext.to_str())
                 && allowed_exts.contains(ext)
-                && let Ok(creation_time) = path.metadata().and_then(|m| m.created())
+                && let Ok(mod_time) = path.metadata().and_then(|m| m.modified())
             {
-                return creation_time >= timestamp;
+                return mod_time >= timestamp;
             }
 
             false
