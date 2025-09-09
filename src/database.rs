@@ -254,6 +254,9 @@ impl Database {
                         let value = self.data_rows[i].song.metadata.get(tag).into();
                         (tag.to_string(), value)
                     });
+
+                    // additional non-standard tags that clients
+                    // will generally want to use
                     let mut map = Map::from_iter(data);
                     map.insert(
                         "duration".to_string(),

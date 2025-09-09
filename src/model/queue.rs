@@ -7,8 +7,8 @@ use std::{
 
 // https://www.ams.org/journals/mcom/1999-68-225/S0025-5718-99-00996-5/S0025-5718-99-00996-5.pdf
 // not using an rng from the rand crate makes (de)serialization easier
-const RNG_A: usize = 35;
-const RNG_MOD: usize = 509;
+const RNG_A: usize = 279_470_273;
+const RNG_MOD: usize = 4_294_967_291;
 
 #[derive(Clone, Debug, Decode, Encode, PartialEq)]
 pub struct Entry {
@@ -56,8 +56,10 @@ impl Rng {
 }
 
 impl Random {
-    pub fn new(mut ids: Vec<u32>) -> Self {
-        let mut rng = Rng(ids.len());
+    // k is there to prevent seeding with the same value
+    // when starting from an empty vector
+    pub fn new(mut ids: Vec<u32>, k: usize) -> Self {
+        let mut rng = Rng(ids.len() + k);
         // Fisher-Yates shuffle
         for i in 0..(ids.len().saturating_sub(1)) {
             let j = rng.next_usize(i, ids.len().saturating_sub(1));
@@ -111,14 +113,22 @@ impl Queue {
                 let _ = self.pos.take();
             }
             QueueMode::Random(random) => match random.ids.pop() {
-                Some(id) => self.pos = self.find_by_id(id),
+                // Some(id) => self.pos = self.find_by_id(id),
+                Some(id) => match self.find_by_id(id) {
+                    Some(pos) => self.pos = Some(pos),
+                    None => {
+                        // the number of recursive calls here is
+                        // bounded by the random.ids.len()
+                        self.move_next();
+                    }
+                },
                 None => {
                     // random pool exhausted
                     let ids: Vec<_> = self.list.iter().map(|entry| entry.id).collect();
                     if ids.is_empty() {
                         self.pos = None;
                     } else {
-                        self.mode = QueueMode::Random(Random::new(ids));
+                        self.mode = QueueMode::Random(Random::new(ids, 0));
                         // this won't recurse more because
                         // the Some(id) branch will be taken
                         self.move_next();
@@ -208,6 +218,9 @@ impl Queue {
         self.history.clear();
         let _ = self.pos.take();
         self.next_id = 0;
+        if let QueueMode::Random(rng) = &mut self.mode {
+            self.mode = QueueMode::Random(Random::new(Vec::new(), rng.rng.next_usize(1, 100)));
+        }
     }
 
     pub fn start_random(&mut self) {
@@ -227,7 +240,7 @@ impl Queue {
         if not_played_ids.is_empty() {
             not_played_ids = self.list.iter().map(|entry| entry.id).collect();
         }
-        self.mode = QueueMode::Random(Random::new(not_played_ids));
+        self.mode = QueueMode::Random(Random::new(not_played_ids, 0));
     }
 
     pub fn start_sequential(&mut self) {
@@ -297,5 +310,26 @@ mod test {
         queue.move_next();
         queue.move_next();
         assert_eq!(queue.current(), Some((1, "song1".into()).into()).as_ref());
+    }
+
+    #[test]
+    fn random() {
+        let mut queue = Queue::default();
+        let n = 5;
+        for i in 1..=n {
+            queue.add(format!("song{}", i), None);
+        }
+        queue.start_random();
+
+        for _ in 0..100 {
+            let mut ids = Vec::new();
+            for _ in 0..n {
+                queue.move_next();
+                ids.push(queue.current().unwrap().id);
+            }
+            ids.sort();
+
+            assert_eq!(ids, (1..=n).collect::<Vec<_>>());
+        }
     }
 }
