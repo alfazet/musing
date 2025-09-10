@@ -356,15 +356,16 @@ impl Database {
             };
         }
 
+        // remove a song from the database if its file doesn't exist
+        // anymore or its file has been modified recently (these ones
+        // will be included in added_songs)
         self.data_rows.par_iter_mut().for_each(|row| {
-            if let Ok(mod_time) = row.song.path.metadata().and_then(|m| m.modified()) {
-                if mod_time >= self.last_update
-                    && let Ok(song) = Song::try_new(&row.song.path)
-                {
-                    row.song = song;
-                }
-            } else {
-                // delete unreadable songs
+            if !row.song.path.exists() {
+                row.pending_delete = true;
+            }
+            if let Ok(mod_time) = row.song.path.metadata().and_then(|m| m.modified())
+                && mod_time >= self.last_update
+            {
                 row.pending_delete = true;
             }
         });
