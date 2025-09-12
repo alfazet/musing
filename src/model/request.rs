@@ -360,7 +360,7 @@ impl TryFrom<&str> for RequestKind {
             "disable" => RequestKind::Device(Device::Disable(map.try_into()?)),
             "enable" => RequestKind::Device(Device::Enable(map.try_into()?)),
             "volume" => RequestKind::Playback(Playback::Volume(map.try_into()?)),
-            "gapless" => RequestKind::Playback(Playback::Gapless),
+            "modegapless" => RequestKind::Playback(Playback::Gapless),
             "pause" => RequestKind::Playback(Playback::Pause),
             "resume" => RequestKind::Playback(Playback::Resume),
             "seek" => RequestKind::Playback(Playback::Seek(map.try_into()?)),
@@ -377,14 +377,14 @@ impl TryFrom<&str> for RequestKind {
             "save" => RequestKind::Playlist(Playlist::Save(map.try_into()?)),
 
             "addqueue" => RequestKind::Queue(Queue::AddToQueue(map.try_into()?)),
-            "clear" => RequestKind::Queue(Queue::Clear),
+            "clearqueue" => RequestKind::Queue(Queue::Clear),
+            "moderandom" => RequestKind::Queue(Queue::Random),
+            "modesequential" => RequestKind::Queue(Queue::Sequential),
+            "modesingle" => RequestKind::Queue(Queue::Single),
             "next" => RequestKind::Queue(Queue::Next),
             "play" => RequestKind::Queue(Queue::Play(map.try_into()?)),
             "previous" => RequestKind::Queue(Queue::Previous),
-            "random" => RequestKind::Queue(Queue::Random),
             "removequeue" => RequestKind::Queue(Queue::RemoveFromQueue(map.try_into()?)),
-            "sequential" => RequestKind::Queue(Queue::Sequential),
-            "single" => RequestKind::Queue(Queue::Single),
 
             "state" => RequestKind::State,
 
