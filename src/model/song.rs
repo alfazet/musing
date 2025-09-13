@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use base64::prelude::*;
 use std::{
     collections::HashMap,
     fs::File,
@@ -92,6 +93,20 @@ impl Song {
 pub fn demuxer(path: impl AsRef<Path>, gapless: bool) -> Result<Box<dyn FormatReader>> {
     let probe_res = song_utils::get_probe_result(path, gapless)?;
     Ok(probe_res.format)
+}
+
+pub fn cover_art(path: impl AsRef<Path>) -> Option<String> {
+    let mut probe_res = song_utils::get_probe_result(path, false).ok()?;
+    let metadata_container = probe_res.format.metadata();
+    let metadata_probe = probe_res.metadata.get();
+    let image = metadata_container
+        .current()
+        .or(metadata_probe.as_ref().and_then(|m| m.current()))?
+        .visuals()
+        .iter()
+        .next();
+
+    image.map(|image| BASE64_STANDARD.encode(&image.data))
 }
 
 mod song_utils {

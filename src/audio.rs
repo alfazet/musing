@@ -48,6 +48,8 @@ pub struct Audio {
     tx_event: tokio_chan::UnboundedSender<SongEvent>,
 }
 
+// TODO: figure out what's causing a system-wide
+// audio failure when using multiple devices at once
 impl Audio {
     pub fn new(
         state: Option<AudioState>,

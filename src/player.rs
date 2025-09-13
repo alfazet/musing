@@ -18,7 +18,7 @@ use crate::{
         queue::Queue,
         request::{self, Request, RequestKind},
         response::{JsonObject, Response},
-        song::SongEvent,
+        song::{self, SongEvent},
     },
     state::{AudioState, PlayerState, State},
 };
@@ -290,6 +290,10 @@ impl Player {
                     .queue
                     .current()
                     .map(|cur| self.queue.find_by_id(cur.id)),
+            )
+            .with_item(
+                "cover_art",
+                &self.queue.current().map(|cur| song::cover_art(&cur.path)),
             )
     }
 
