@@ -1,7 +1,12 @@
 [package]
 name = "musing"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+description = "An MPD-inspired music server"
+keywords = ["music", "player", "server"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/alfazet/musing"
 
 [dependencies]
 anyhow = "1.0.98"
@@ -26,3 +31,8 @@ symphonia = { version = "0.5.4", features = ["all", "opt-simd"] }
 tokio = { version = "1.46.1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }
 toml = "0.9.5"
 unidecode = "0.3.0"
+
+[profile.release]
+lto = true
+panic = "abort"
+strip = true
