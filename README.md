@@ -30,4 +30,4 @@ As noted earlier, Musing is just a server and so requires a client to interact w
 
 ## Future goals
 - [ ] Extend the API.
-- [ ] Stream raw PCM data to allow music visualization in clients.
+- [ ] Stream raw PCM data over UDP.

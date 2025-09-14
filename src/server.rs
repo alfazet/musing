@@ -114,8 +114,10 @@ impl Server {
         tx_shutdown: broadcast::Sender<()>,
     ) -> Result<()> {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", self.port)).await?;
+        log::warn!("server listening on port {}", self.port);
         loop {
-            let (stream, _) = listener.accept().await?;
+            let (stream, addr) = listener.accept().await?;
+            log::warn!("new client: {}", addr);
             let tx_request_ = tx_request.clone();
             let rx_shutdown = tx_shutdown.subscribe();
             tokio::spawn(async move {
@@ -123,6 +125,7 @@ impl Server {
                 if let Err(e) = client_handler.run(tx_request_, rx_shutdown).await {
                     log::error!("client handler error ({})", e);
                 }
+                log::warn!("{} disconnected", addr);
             });
         }
     }

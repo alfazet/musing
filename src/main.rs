@@ -21,13 +21,13 @@ mod model;
 
 fn setup_logging(cli_opts: &CliOptions) {
     if cli_opts.log_stderr {
-        simple_logging::log_to_stderr(log::LevelFilter::Error);
+        simple_logging::log_to_stderr(log::LevelFilter::Warn);
     } else {
         let default_log_file = dirs::cache_dir()
             .unwrap_or(".".into())
             .join(constants::DEFAULT_LOG_FILE);
         let log_file = cli_opts.log_file.as_deref().unwrap_or(&default_log_file);
-        let _ = simple_logging::log_to_file(log_file, log::LevelFilter::Error);
+        let _ = simple_logging::log_to_file(log_file, log::LevelFilter::Warn);
     }
 }
 
@@ -35,18 +35,17 @@ fn setup_logging(cli_opts: &CliOptions) {
 async fn main() {
     let cli_opts = CliOptions::parse();
     setup_logging(&cli_opts);
+    let config = match Config::try_from_file(cli_opts.config_file.as_deref()) {
+        Ok(config) => config.merge_with_cli(cli_opts),
+        Err(e) => {
+            log::warn!("issue with loading config ({}), falling back to default", e);
+            Config::default().merge_with_cli(cli_opts)
+        }
+    };
     let Config {
         server_config,
         player_config,
-    } = match Config::try_from_file(cli_opts.config_file.as_deref())
-        .map(|c| c.merge_with_cli(cli_opts))
-    {
-        Ok(config) => config,
-        Err(e) => {
-            log::error!("config error ({}), falling back to default config", e);
-            Config::default()
-        }
-    };
+    } = config;
 
     let (tx_request, rx_request) = tokio_chan::unbounded_channel();
     // two-way shutdown notification to ensure that state is saved no matter how the program exits

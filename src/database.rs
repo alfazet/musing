@@ -84,6 +84,8 @@ impl Database {
         let playlist_dir = playlist_dir.unwrap_or(&default_playlist_dir);
         let playlists = Self::build_playlists(playlist_dir);
         let last_update = SystemTime::now();
+        log::warn!("database with {} rows created", data_rows.len());
+        log::warn!("{} playlists found", playlists.len());
 
         Ok(Self {
             music_dir: music_dir.into(),
@@ -431,6 +433,9 @@ mod db_utils {
 
     pub fn binary_search_by_path(rows: &[DataRow], path: impl AsRef<Path>) -> Option<usize> {
         let n = rows.len();
+        if n == 0 {
+            return None;
+        }
         let (mut i, mut step) = (0, n / 2);
         while step >= 1 {
             while i + step < n && rows[i + step].song.path <= path.as_ref() {
