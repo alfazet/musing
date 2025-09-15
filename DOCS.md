@@ -271,7 +271,7 @@ Stops the playback.
 {
     "kind": "addqueue",
     "paths": array of strings
-    "pos": integer, optional
+    "pos": integer (optional),
 }
 ```
 
@@ -414,6 +414,105 @@ Example response:
 }
 ```
 
+### disable
+```json
+{
+    "kind": "disable",
+    "device": string,
+}
+```
+
+Disables the given audio device.
+
+### enable
+```json
+{
+    "kind": "enable",
+    "device": string,
+}
+```
+
+Enables the given audio device.
+
+### addplaylist
+```json
+{
+    "kind": "addplaylist",
+    "playlist": string,
+    "song": string,
+}
+```
+
+Appends the `song` to `playlist` (an .m3u or .m3u8 file).
+
+### listsongs
+```json
+{
+    "kind": "listsongs",
+    "playlist": string,
+}
+```
+
+Returns an array containing paths of all songs in the `playlist` file. Paths are relative to the database's root directory.
+
+Response:
+```json
+{
+    "songs": array of strings
+}
+```
+
+Example request:
+```json
+{
+    "kind": "listsongs",
+    "playlist": "/playlist/dir/foobar.m3u",
+}
+```
+Example response:
+```json
+{
+    "songs": ["song_one.mp3", "song_two.mp3"],
+}
+```
+
+### load
+```json
+{
+    "kind": "load",
+    "playlist": string,
+    "range": [integer, integer] (optional),
+    "pos": integer (optional),
+}
+```
+
+Loads the `playlist` to the queue. If `range = [i, j]` is provided, only songs from the `i`-th to the `j`-th one (zero-indexed) are loaded.
+If `pos` is provided, then songs are inserted at position `pos` (also zero-indexed), otherwise they're appended to the end.
+This command can succeed partially - all songs that were found in the database will be loaded, and the ones that weren't will be returned inside the `reason` key.
+A status of `ok` will be returned only if all songs were found.
+
+### removeplaylist
+```json
+{
+    "kind": "removeplaylist",
+    "playlist": string,
+    "pos": integer,
+}
+```
+
+Removes the song at position `pos` (zero-indexed) from the `playlist` file.
+
+### save
+```json
+{
+    "kind": "save",
+    "path": string,
+}
+```
+
+Saves the current queue as file at the given `path`. The created file conforms to the M3U format (one song per line).
+Song paths are saved as relative to the database's root directory (which makes this operation cross-platform as relative paths are parsed as the same on UNIX and Windows).
+
 ## Supported tags
 Musing supports the following tags (valid in all requests that require tag names):
 - `album`
@@ -446,7 +545,3 @@ Musing supports the following tags (valid in all requests that require tag names
 - `sorttracktitle`
 - `tracknumber`
 - `tracktitle`
-
-## TODO
-- [ ] Add device requests.
-- [ ] Add playlist requests.
