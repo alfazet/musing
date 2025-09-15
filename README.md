@@ -11,10 +11,9 @@ A music player-server for storing, searching through and listening to your music
 - Play audio files of multiple formats: mp3, aac, flac, wav, aif, ogg (powered by [symphonia](https://github.com/pdeljanov/Symphonia)).
 - Manage and query your music colletion with a simple JSON-based protocol.
 - Extract metadata (titles, albums, genres, even cover art) from tracks.
-- And do all of it blazingly f... sorry, I'll stop now...
 
 ## Installation
-Install Musing from cargo (`cargo install musing`) or download the source code and build it on your own. For Windows users there's a prebuild binary available in [Releases](https://github.com/alfazet/musing/releases).
+Install Musing from cargo (`cargo install musing`) or download the source code and build it on your own. For Windows users there's a prebuilt binary available in [Releases](https://github.com/alfazet/musing/releases).
 
 ## Usage and configuration
 Simply run `musing -m=<MUSIC_DIR>`, where `<MUSIC_DIR>` is the directory where you store your music collection. Musing will then index all files in this directory (and recursively in its subdirectories) and create a music database out of them.
@@ -28,6 +27,7 @@ Keep in mind that values supplied with command-line arguments take precedence ov
 
 As noted earlier, Musing is just a server and so requires a client to interact with it. If you want to build your own client, take a look at the [documentation](./DOCS.md) for an API reference.
 
-## Future goals
+## TODO
 - [ ] Extend the API.
-- [ ] Stream raw PCM data over UDP.
+- [ ] Stream raw PCM data (e.g. for use by music visualizers).
+- [ ] Add proxy mode (for use with remote servers).
