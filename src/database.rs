@@ -253,7 +253,7 @@ impl Database {
                 let abs_path = db_utils::to_abs_path(&self.music_dir, path);
                 db_utils::binary_search_by_path(&self.data_rows, abs_path).map(|i| {
                     let data = tags.iter().map(|tag| {
-                        let value = self.data_rows[i].song.metadata.get(tag).into();
+                        let value = self.data_rows[i].song.metadata.get(*tag).into();
                         (tag.to_string(), value)
                     });
 
@@ -300,13 +300,13 @@ impl Database {
             let song = &row.song;
             let combination: Vec<_> = group_by
                 .iter()
-                .map(|group_tag| song.metadata.get(group_tag))
+                .map(|group_tag| song.metadata.get(*group_tag))
                 .collect();
 
             let make_song_data = || {
                 let mut song_data: Vec<_> = tags
                     .iter()
-                    .map(|tag| song.metadata.get(tag).map(String::from))
+                    .map(|tag| song.metadata.get(*tag).map(String::from))
                     .collect();
                 song_data.push(Some(song.path.to_string_lossy().into_owned()));
 

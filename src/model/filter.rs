@@ -27,7 +27,7 @@ impl FilterExpr {
 
 impl Filter for RegexFilter {
     fn matches(&self, song: &Song) -> bool {
-        match song.metadata.get(&self.tag) {
+        match song.metadata.get(self.tag) {
             Some(value) => self.regex.is_match(&unidecode(value)),
             None => false,
         }

@@ -99,6 +99,14 @@ lazy_static! {
             .zip(TAG_KEYS.iter().cloned())
             .collect()
     };
+    static ref TAG_FALLBACK: HashMap<StandardTagKey, StandardTagKey> = HashMap::from([
+        (StandardTagKey::AlbumArtist, StandardTagKey::Artist),
+        (StandardTagKey::SortAlbum, StandardTagKey::Album),
+        (StandardTagKey::SortAlbumArtist, StandardTagKey::AlbumArtist),
+        (StandardTagKey::SortArtist, StandardTagKey::Artist),
+        (StandardTagKey::SortComposer, StandardTagKey::Composer),
+        (StandardTagKey::SortTrackTitle, StandardTagKey::TrackTitle)
+    ]);
 }
 
 impl Display for TagKey {
@@ -111,16 +119,10 @@ impl TryFrom<&str> for TagKey {
     type Error = anyhow::Error;
 
     fn try_from(s: &str) -> Result<Self> {
-        use StandardTagKey as STKey;
-
         let Some(key) = TAG_MAP.get(&s).cloned() else {
             bail!("invalid tag `{}`", s);
         };
-        let kind = match key {
-            STKey::Bpm => TagKeyKind::Integer,
-            STKey::DiscNumber | STKey::MovementNumber | STKey::TrackNumber => TagKeyKind::OutOf,
-            _ => TagKeyKind::String,
-        };
+        let kind = tag_key_kind(key);
 
         Ok(Self { key, kind })
     }
@@ -131,6 +133,29 @@ impl TryFrom<StandardTagKey> for TagKey {
 
     fn try_from(s_key: StandardTagKey) -> Result<Self> {
         Self::try_from(enum_stringify!(s_key).to_lowercase().as_str())
+    }
+}
+
+impl TagKey {
+    pub fn fallback(self) -> Option<Self> {
+        TAG_FALLBACK.get(&self.key).copied().map(|fallback_key| {
+            let kind = tag_key_kind(fallback_key);
+
+            Self {
+                key: fallback_key,
+                kind,
+            }
+        })
+    }
+}
+
+fn tag_key_kind(key: StandardTagKey) -> TagKeyKind {
+    use StandardTagKey as STKey;
+
+    match key {
+        STKey::Bpm => TagKeyKind::Integer,
+        STKey::DiscNumber | STKey::MovementNumber | STKey::TrackNumber => TagKeyKind::OutOf,
+        _ => TagKeyKind::String,
     }
 }
 

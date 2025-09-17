@@ -45,8 +45,17 @@ impl From<&MetadataRevision> for Metadata {
 }
 
 impl Metadata {
-    pub fn get(&self, tag: &TagKey) -> Option<&str> {
-        self.data.get(tag).map(|s| s.as_str())
+    pub fn get(&self, mut tag: TagKey) -> Option<&str> {
+        loop {
+            let tag_value = self.data.get(&tag).map(|s| s.as_str());
+            if tag_value.is_some() {
+                break tag_value;
+            }
+            match tag.fallback() {
+                Some(fallback) => tag = fallback,
+                None => break None,
+            }
+        }
     }
 
     pub fn merge(self, other: Metadata) -> Self {

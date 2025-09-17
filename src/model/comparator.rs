@@ -88,8 +88,8 @@ impl Comparator {
     }
 
     pub fn cmp(&self, lhs: &Metadata, rhs: &Metadata) -> Ordering {
-        let lhs = lhs.get(&self.tag);
-        let rhs = rhs.get(&self.tag);
+        let lhs = lhs.get(self.tag);
+        let rhs = rhs.get(self.tag);
         let ordering = match (lhs, rhs) {
             (Some(lhs), Some(rhs)) => self.cmp_values(lhs, rhs),
             (Some(_), None) => Ordering::Greater,
